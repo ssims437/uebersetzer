@@ -1,0 +1,52 @@
+name: Prueflauf
+
+# Der Pruefknopf im Blatt ist der Test. Hier wird er im echten Browser gedrueckt,
+# an derselben Datei, die auch veroeffentlicht wird.
+#
+# Sparsam gehalten:
+#   - laeuft nur, wenn sich das Blatt oder der Pruefer aendert (nicht bei README)
+#   - bricht einen noch laufenden Lauf desselben Zweigs ab
+#   - haelt den Browser im Cache, statt ihn jedes Mal zu laden
+#   - Zeitplan monatlich, damit Browser-Aenderungen auffallen, ohne Laerm zu machen
+
+on:
+  push:
+    paths:
+      - "**.html"
+      - "**.mjs"
+      - ".github/workflows/pruefen.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 1 * *"
+
+concurrency:
+  group: pruefen-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruefen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Browser aus dem Cache
+        id: browsercache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.47.2-${{ runner.os }}
+
+      - name: Playwright holen
+        run: npm install --no-save --no-audit --no-fund playwright@1.47.2
+
+      - name: Chromium holen
+        if: steps.browsercache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      - name: Prueflauf im Browser druecken
+        run: node .github/pruefen.mjs

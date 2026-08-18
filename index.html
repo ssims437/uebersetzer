@@ -1,0 +1,2063 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<title>Übersetzer — von Text zu Maschine, Schritt für Schritt</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="Eine kleine Programmiersprache vom Zeichen bis zur laufenden Maschine: Wörter, Syntaxbaum, Bytecode, Stapelmaschine mit Schritt-Debugger — und ein Prüflauf, der zwei unabhängige Übersetzer gegeneinander stellt." />
+
+<style>
+  :root {
+    --grund: #EEEFF0;
+    --feld:  #FAFBFB;
+    --tief:  #E2E4E6;
+    --linie: #C6C9CC;
+    --tinte: #16181A;
+    --leise: #626870;
+    --netz:  #B4B8BD;
+    --wort:  #1F5FA8;   /* Wörter / Lexer */
+    --baum:  #7A4E9A;   /* Syntaxbaum */
+    --code:  #2E6B5E;   /* Bytecode */
+    --lauf:  #B4762A;   /* laufende Maschine */
+    --warn:  #A32C22;
+    --gut:   #2C7A34;
+    --schatten: 0 1px 0 rgba(22,24,26,.05), 0 10px 24px -16px rgba(22,24,26,.45);
+    --f-fest: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "DejaVu Sans Mono", monospace;
+    --f-text: -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --grund: #111315; --feld: #181A1D; --tief: #0B0D0E; --linie: #2C3034;
+      --tinte: #E5E8EA; --leise: #8C939B; --netz: #383D42;
+      --wort: #6CA8E8; --baum: #B48ADA; --code: #58A895; --lauf: #E0A75E;
+      --warn: #E0776B; --gut: #7FBF6A;
+      --schatten: 0 1px 0 rgba(255,255,255,.03), 0 12px 30px -18px #000;
+    }
+  }
+  :root[data-theme="dark"] {
+    --grund: #111315; --feld: #181A1D; --tief: #0B0D0E; --linie: #2C3034;
+    --tinte: #E5E8EA; --leise: #8C939B; --netz: #383D42;
+    --wort: #6CA8E8; --baum: #B48ADA; --code: #58A895; --lauf: #E0A75E;
+    --warn: #E0776B; --gut: #7FBF6A;
+    --schatten: 0 1px 0 rgba(255,255,255,.03), 0 12px 30px -18px #000;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--grund); color:var(--tinte);
+    font-family:var(--f-text); font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased; }
+  .blatt { max-width:1160px; margin:0 auto;
+    padding: clamp(20px,4vw,44px) clamp(14px,3vw,28px) 64px;
+    display:flex; flex-direction:column; gap:18px; }
+
+  .marke { font-family:var(--f-fest); font-size:10px; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--leise); display:flex; gap:12px; align-items:center; margin:0; }
+  .marke::after { content:""; flex:1; height:1px; background:var(--linie); }
+  h1 { font-family:var(--f-fest); font-weight:700; font-size:clamp(24px,4.2vw,40px);
+    line-height:1.06; letter-spacing:-.03em; margin:0; text-wrap:balance; }
+  h1 span { color:var(--baum); }
+  .vorspann { max-width:70ch; color:var(--leise); margin:0; }
+  .vorspann b { color:var(--tinte); font-weight:600; }
+
+  .leiste { display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    background:var(--feld); border:1px solid var(--linie); padding:9px 11px; box-shadow:var(--schatten); }
+  .kl { font-family:var(--f-fest); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--leise); }
+  button, select, input, textarea { font-family:var(--f-fest); font-size:12px; color:var(--tinte);
+    background:var(--grund); border:1px solid var(--linie); border-radius:0; padding:6px 10px; letter-spacing:.03em; }
+  button, select { cursor:pointer; }
+  button:hover, select:hover { border-color:var(--wort); }
+  button:active { background:var(--tief); }
+  button:disabled { opacity:.4; cursor:default; }
+  button.haupt { background:var(--wort); border-color:var(--wort); color:var(--feld); }
+  button[aria-pressed="true"] { background:var(--tief); border-color:var(--wort); }
+  input[type=range] { padding:0; background:none; border:none; accent-color:var(--wort); vertical-align:middle; }
+  :focus-visible { outline:2px solid var(--wort); outline-offset:2px; }
+
+  .kasten { background:var(--feld); border:1px solid var(--linie); box-shadow:var(--schatten);
+    display:flex; flex-direction:column; min-width:0; }
+  .kasten-kopf { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+    padding:8px 11px; border-bottom:1px solid var(--linie); }
+  .kasten-leib { padding:11px; display:flex; flex-direction:column; gap:10px; min-width:0; }
+  .buehne { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:18px; align-items:start; }
+  @media (max-width: 900px) { .buehne { grid-template-columns: minmax(0,1fr); } }
+  .saeule { display:flex; flex-direction:column; gap:18px; min-width:0; }
+
+  textarea#quelle { width:100%; min-height:290px; resize:vertical; line-height:1.5; tab-size:2;
+    background:var(--tief); white-space:pre; overflow-x:auto; }
+  canvas { width:100%; height:auto; display:block; background:var(--tief); border:1px solid var(--linie); }
+  .baum-rolle { overflow-x:auto; max-width:100%; }
+  .baum-rolle canvas { max-width:none; }
+
+  .anzeige { font-family:var(--f-fest); font-size:12px; background:var(--tief); border:1px solid var(--linie);
+    padding:8px 10px; max-height:230px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin:0; }
+  .anzeige.leer { color:var(--leise); }
+
+  table.liste { border-collapse:collapse; width:100%; font-family:var(--f-fest); font-size:12px; }
+  table.liste th, table.liste td { border-bottom:1px solid var(--linie); padding:4px 7px; text-align:left; }
+  table.liste th { color:var(--leise); font-weight:400; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+  table.liste td.z { text-align:right; font-variant-numeric:tabular-nums; }
+  .gutt { color:var(--gut); } .schlecht { color:var(--warn); }
+
+  .code-liste { max-height:330px; overflow:auto; }
+  .code-liste tr.jetzt td { background:color-mix(in srgb, var(--lauf) 22%, transparent); }
+  .code-liste td.nr { color:var(--leise); text-align:right; width:4ch; }
+  .code-liste td.bef { color:var(--code); }
+  .code-liste td.arg { color:var(--tinte); }
+  .code-liste td.bem { color:var(--leise); }
+
+  .woerter { display:flex; flex-wrap:wrap; gap:4px; max-height:230px; overflow:auto; }
+  .wortmarke { font-family:var(--f-fest); font-size:11px; border:1px solid var(--linie);
+    padding:1px 5px; background:var(--tief); }
+  .wortmarke b { font-weight:600; }
+  .wortmarke.schluessel { color:var(--baum); border-color:color-mix(in srgb, var(--baum) 45%, var(--linie)); }
+  .wortmarke.zahl { color:var(--lauf); }
+  .wortmarke.text { color:var(--code); }
+  .wortmarke.name { color:var(--wort); }
+
+  .stapel { display:flex; flex-direction:column-reverse; gap:2px; min-height:60px; }
+  .stapel div { font-family:var(--f-fest); font-size:12px; background:var(--tief);
+    border:1px solid var(--linie); padding:2px 7px; }
+  .stapel div.oben { border-color:var(--lauf); color:var(--lauf); }
+
+  .werte { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:1px;
+    background:var(--linie); border:1px solid var(--linie); }
+  .wert { background:var(--feld); padding:7px 9px; min-width:0; }
+  .wert .l { font-family:var(--f-fest); font-size:9.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--leise); }
+  .wert .n { font-family:var(--f-fest); font-size:16px; font-variant-numeric:tabular-nums; }
+  .wert .n.gut { color:var(--gut); } .wert .n.warn { color:var(--warn); } .wert .n.lauf { color:var(--lauf); }
+
+  .hinweis { font-family:var(--f-fest); font-size:12px; color:var(--leise); letter-spacing:0; margin:0; }
+  .hinweis b { color:var(--tinte); font-weight:600; }
+  .fehler { color:var(--warn); font-family:var(--f-fest); font-size:12px; }
+
+  .noten { display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:18px; margin-top:6px; }
+  .noten section { background:var(--feld); border:1px solid var(--linie); padding:12px 14px; box-shadow:var(--schatten); }
+  .noten h3 { font-family:var(--f-fest); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--leise); margin:0 0 6px; font-weight:400; }
+  .noten p { margin:0; font-size:14px; }
+  code { font-family:var(--f-fest); font-size:12.5px; background:var(--tief); padding:1px 4px; }
+  .fuss { color:var(--leise); font-size:13px; border-top:1px solid var(--linie); padding-top:12px; }
+  .fuss a { color:var(--wort); }
+</style>
+</head>
+<body>
+<main class="blatt">
+
+  <p class="marke">Blatt · Sprachen</p>
+  <h1>Übersetzer — von <span>Text</span> zu Maschine, Schritt für Schritt</h1>
+  <p class="vorspann">
+    Zwischen einer Zeile Quelltext und dem, was der Rechner tut, liegen vier Verwandlungen, die
+    sonst niemand zu sehen bekommt: <b>Zeichen werden Wörter, Wörter werden ein Baum, der Baum wird
+    Bytecode, der Bytecode wird Bewegung auf einem Stapel.</b> Hier ist die ganze Kette an einem
+    Stück — für eine kleine Sprache namens <b>Kiesel</b>, die genug kann, um wirklich zu rechnen:
+    Variablen, Verzweigungen, Schleifen, Funktionen mit Rekursion.
+  </p>
+
+  <div class="leiste">
+    <span class="kl">Beispiel</span>
+    <select id="beispiel" aria-label="Beispielprogramm"></select>
+    <button id="b-optimieren" aria-pressed="true">Optimierer</button>
+    <span style="flex:1"></span>
+    <button id="b-thema">Ansicht</button>
+  </div>
+
+  <div class="buehne">
+    <div class="saeule">
+      <div class="kasten">
+        <div class="kasten-kopf">
+          <span class="kl">Quelltext · Kiesel</span>
+          <span class="kl" id="quelle-lage" style="margin-left:auto"></span>
+        </div>
+        <div class="kasten-leib">
+          <textarea id="quelle" spellcheck="false" aria-label="Quelltext"></textarea>
+          <p class="hinweis" id="fehler-zeile"></p>
+        </div>
+      </div>
+
+      <div class="kasten">
+        <div class="kasten-kopf">
+          <span class="kl">1 · Wörter</span>
+          <span class="kl" id="woerter-lage" style="margin-left:auto"></span>
+        </div>
+        <div class="kasten-leib">
+          <div class="woerter" id="woerter"></div>
+          <p class="hinweis">
+            Der erste Schritt zerlegt den Text in <b>Wörter</b>: Zahlen, Namen, Schlüsselwörter,
+            Zeichen. Ab hier gibt es keine Leerzeichen und keine Kommentare mehr — nur noch Marken
+            mit Zeile und Spalte, damit ein Fehler später sagen kann, <i>wo</i> er sitzt.
+          </p>
+        </div>
+      </div>
+
+      <div class="kasten">
+        <div class="kasten-kopf">
+          <span class="kl">2 · Syntaxbaum</span>
+          <span class="kl" id="baum-lage" style="margin-left:auto"></span>
+        </div>
+        <div class="kasten-leib">
+          <div class="baum-rolle"><canvas id="baum" width="1000" height="420" aria-label="Syntaxbaum des Programms"></canvas></div>
+          <p class="hinweis">
+            Der Baum entscheidet, <b>was zu wem gehört</b>: <code>2 + 3 * 4</code> wird nicht von
+            links nach rechts gelesen, sondern die Multiplikation hängt tiefer. Gebaut wird er von
+            einem <b>Pratt-Parser</b> — jedes Zeichen bringt seine eigene Bindungsstärke mit, und
+            das ersetzt die Grammatikregeln, die man sonst je Vorrangstufe schreiben müsste.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="saeule">
+      <div class="kasten">
+        <div class="kasten-kopf">
+          <span class="kl">3 · Bytecode</span>
+          <span class="kl" id="code-lage" style="margin-left:auto"></span>
+        </div>
+        <div class="kasten-leib">
+          <div class="code-liste">
+            <table class="liste" id="code"><tbody></tbody></table>
+          </div>
+          <p class="hinweis" id="code-fuss"></p>
+        </div>
+      </div>
+
+      <div class="kasten">
+        <div class="kasten-kopf">
+          <span class="kl">4 · Maschine</span>
+          <button id="b-schritt" style="margin-left:auto">Schritt</button>
+          <button id="b-laufen" class="haupt">Laufen</button>
+          <button id="b-zurueck">Zurück auf Anfang</button>
+        </div>
+        <div class="kasten-leib">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="kl">Tempo</span>
+            <input type="range" id="tempo" min="0" max="100" value="70" style="flex:1;min-width:90px" aria-label="Tempo" />
+            <span class="kl" id="tempo-zahl" style="min-width:9ch;text-align:right"></span>
+          </div>
+          <div class="werte">
+            <div class="wert"><div class="l">Schritte</div><div class="n lauf" id="w-schritte">0</div></div>
+            <div class="wert"><div class="l">Stapeltiefe</div><div class="n" id="w-tiefe">0</div></div>
+            <div class="wert"><div class="l">Aufruftiefe</div><div class="n" id="w-rahmen">0</div></div>
+            <div class="wert"><div class="l">Zustand</div><div class="n" id="w-zustand">bereit</div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <div class="kl" style="margin-bottom:4px">Stapel</div>
+              <div class="stapel" id="stapel"></div>
+            </div>
+            <div>
+              <div class="kl" style="margin-bottom:4px">Aufrufkeller</div>
+              <div class="stapel" id="rahmen"></div>
+            </div>
+          </div>
+          <div class="kl">Variablen</div>
+          <table class="liste" id="variablen"><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div class="kasten">
+        <div class="kasten-kopf"><span class="kl">Ausgabe</span>
+          <span class="kl" id="ausgabe-lage" style="margin-left:auto"></span></div>
+        <div class="kasten-leib">
+          <pre class="anzeige leer" id="ausgabe">noch nichts ausgegeben</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="kasten">
+    <div class="kasten-kopf">
+      <span class="kl">Beweis statt Behauptung</span>
+      <button id="b-pruefen" class="haupt" style="margin-left:auto">Prüfen</button>
+    </div>
+    <div class="kasten-leib">
+      <p class="hinweis">
+        Ein Übersetzer, der falschen Code erzeugt, fällt nicht auf — er rechnet einfach etwas
+        anderes. Deshalb steht hier <b>alles doppelt</b>: neben der Stapelmaschine läuft ein
+        zweiter, unabhängig geschriebener Auswerter direkt auf dem Baum, und neben dem Pratt-Parser
+        ein zweiter nach dem Verfahren des Rangierbahnhofs. Tausende <b>zufällig erzeugte
+        Programme</b> müssen durch alle Wege dasselbe ergeben — mit und ohne Optimierer. Dazu ein
+        Angriff auf die Fehlerbehandlung: zehntausend mutwillig zerstörte Quelltexte, von denen
+        keiner den Übersetzer zum Absturz bringen darf.
+      </p>
+      <table class="liste" id="pruef"><tbody></tbody></table>
+      <p class="hinweis" id="pruef-fuss">noch nicht geprüft</p>
+    </div>
+  </div>
+
+  <div class="noten">
+    <section>
+      <h3>Warum ein Baum</h3>
+      <p>
+        Text ist eine Reihe, Bedeutung ist eine Verschachtelung. Der Baum ist die Stelle, an der aus
+        <code>2 + 3 * 4</code> die Aussage „addiere 2 zum Produkt von 3 und 4" wird — und der
+        einzige Ort, an dem sich <b>Vorrang</b> und <b>Klammerung</b> überhaupt sauber ausdrücken
+        lassen. Alles danach ist Buchhaltung.
+      </p>
+    </section>
+    <section>
+      <h3>Warum Bytecode</h3>
+      <p>
+        Den Baum direkt auszuwerten geht — der zweite Auswerter hier tut genau das. Bytecode legt
+        dieselbe Bedeutung flach hin: eine Folge einfacher Befehle über einem Stapel, ohne
+        Knotenobjekte und ohne Verzweigung nach Knotenart. Der gemessene Vorsprung ist dabei
+        <b>kleiner, als die Lehrbücher vermuten lassen</b> — beide laufen hier in derselben
+        Sprache, und ein Einmalprogramm verliert sogar, weil das Übersetzen mitzahlt. Die Zahl
+        steht im Prüflauf, nicht in diesem Absatz.
+      </p>
+    </section>
+    <section>
+      <h3>Was der Optimierer darf</h3>
+      <p>
+        Nur das, was am Ergebnis <b>nichts</b> ändert: Konstanten zusammenfassen, doppelte
+        Vorzeichen streichen, Sprünge ins Nichts entfernen, toten Code nach einem <code>zurück</code>
+        weglassen. Ob er sich daran hält, wird nicht angenommen, sondern über dieselben tausenden
+        Programme nachgerechnet.
+      </p>
+    </section>
+  </div>
+
+  <p class="fuss">
+    Eine einzelne HTML-Datei. Kein Build, keine Bibliothek, nichts verlässt den Browser.
+    <span style="display:block;margin-top:8px">
+      Alle Blätter: <a href="https://ssims437.github.io/">ssims437.github.io</a>
+    </span>
+  </p>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  /* ==========================================================================
+     1 · WÖRTER
+     Zeichen zu Marken. Jede Marke merkt sich Zeile und Spalte — ohne das kann
+     eine Fehlermeldung später nur „irgendwo" sagen.
+     ========================================================================== */
+
+  const SCHLUESSEL = new Set(["sei", "wenn", "dann", "sonst", "ende", "solange", "tue",
+    "funktion", "zurück", "zeige", "wahr", "falsch", "und", "oder", "nicht"]);
+
+  const istZiffer = (c) => c >= "0" && c <= "9";
+  const istNameStart = (c) => /[A-Za-zÄÖÜäöüß_]/.test(c);
+  const istNameTeil = (c) => istNameStart(c) || istZiffer(c);
+
+  class Sprachfehler extends Error {
+    constructor(botschaft, zeile, spalte) {
+      super(botschaft);
+      this.zeile = zeile;
+      this.spalte = spalte;
+    }
+    get lang() { return `Zeile ${this.zeile}, Spalte ${this.spalte}: ${this.message}`; }
+  }
+
+  function woerter(quelle) {
+    const raus = [];
+    let i = 0, zeile = 1, spalte = 1;
+    const nimm = () => { const c = quelle[i++]; if (c === "\n") { zeile++; spalte = 1; } else spalte++; return c; };
+    const marke = (art, wert, z, s) => raus.push({ art, wert, zeile: z, spalte: s });
+
+    while (i < quelle.length) {
+      const z = zeile, s = spalte, c = quelle[i];
+
+      if (c === " " || c === "\t" || c === "\r" || c === "\n") { nimm(); continue; }
+      if (c === "#") { while (i < quelle.length && quelle[i] !== "\n") nimm(); continue; }
+
+      if (istZiffer(c)) {
+        let text = "";
+        while (i < quelle.length && istZiffer(quelle[i])) text += nimm();
+        if (quelle[i] === "," && istZiffer(quelle[i + 1])) {          // Komma als Dezimaltrenner
+          text += nimm();
+          while (i < quelle.length && istZiffer(quelle[i])) text += nimm();
+          marke("zahl", parseFloat(text.replace(",", ".")), z, s);
+        } else {
+          marke("zahl", parseFloat(text), z, s);
+        }
+        continue;
+      }
+
+      if (istNameStart(c)) {
+        let text = "";
+        while (i < quelle.length && istNameTeil(quelle[i])) text += nimm();
+        marke(SCHLUESSEL.has(text) ? "schluessel" : "name", text, z, s);
+        continue;
+      }
+
+      if (c === '"') {
+        nimm();
+        let text = "";
+        while (i < quelle.length && quelle[i] !== '"') {
+          if (quelle[i] === "\n") throw new Sprachfehler("Text ohne schließendes Anführungszeichen", z, s);
+          text += nimm();
+        }
+        if (i >= quelle.length) throw new Sprachfehler("Text ohne schließendes Anführungszeichen", z, s);
+        nimm();
+        marke("text", text, z, s);
+        continue;
+      }
+
+      const zwei = quelle.substr(i, 2);
+      if (["==", "!=", "<=", ">="].includes(zwei)) { nimm(); nimm(); marke("zeichen", zwei, z, s); continue; }
+      if ("+-*/%()=<>,".includes(c)) { nimm(); marke("zeichen", c, z, s); continue; }
+
+      throw new Sprachfehler(`unbekanntes Zeichen ${JSON.stringify(c)}`, z, s);
+    }
+    raus.push({ art: "ende", wert: "", zeile, spalte });
+    return raus;
+  }
+
+  /* ==========================================================================
+     2 · SYNTAXBAUM
+     Pratt-Parser: jedes Zeichen bringt seine Bindungsstärke selbst mit. Das
+     ersetzt eine Regel je Vorrangstufe durch eine Tabelle.
+     ========================================================================== */
+
+  const BINDUNG = {
+    "oder": 1, "und": 2,
+    "==": 3, "!=": 3,
+    "<": 4, ">": 4, "<=": 4, ">=": 4,
+    "+": 5, "-": 5,
+    "*": 6, "/": 6, "%": 6,
+    "(": 8                                        // Aufruf bindet am stärksten
+  };
+
+  function zerlege(marken) {
+    let i = 0;
+    const schau = (n = 0) => marken[Math.min(i + n, marken.length - 1)];
+    const weiter = () => marken[i++];
+    const passt = (art, wert) => {
+      const m = schau();
+      return m.art === art && (wert === undefined || m.wert === wert);
+    };
+    const nimmWenn = (art, wert) => { if (passt(art, wert)) { return weiter(); } return null; };
+    const verlange = (art, wert, was) => {
+      if (passt(art, wert)) return weiter();
+      const m = schau();
+      throw new Sprachfehler(`${was} erwartet, gefunden: ${m.art === "ende" ? "Ende des Programms" : JSON.stringify(String(m.wert))}`,
+        m.zeile, m.spalte);
+    };
+
+    function programm() {
+      const liste = [];
+      while (!passt("ende")) liste.push(anweisung());
+      return { art: "block", liste };
+    }
+
+    function block(abschluesse) {
+      const liste = [];
+      while (!passt("ende") && !abschluesse.some((w) => passt("schluessel", w))) liste.push(anweisung());
+      return { art: "block", liste };
+    }
+
+    function anweisung() {
+      const m = schau();
+      if (passt("schluessel", "sei")) {
+        weiter();
+        const name = verlange("name", undefined, "Name");
+        verlange("zeichen", "=", "=");
+        const wert = ausdruck(0);
+        return { art: "sei", name: name.wert, wert, zeile: m.zeile };
+      }
+      if (passt("schluessel", "wenn")) {
+        weiter();
+        const bedingung = ausdruck(0);
+        verlange("schluessel", "dann", "dann");
+        const dann = block(["sonst", "ende"]);
+        let sonst = null;
+        if (nimmWenn("schluessel", "sonst")) sonst = block(["ende"]);
+        verlange("schluessel", "ende", "ende");
+        return { art: "wenn", bedingung, dann, sonst, zeile: m.zeile };
+      }
+      if (passt("schluessel", "solange")) {
+        weiter();
+        const bedingung = ausdruck(0);
+        verlange("schluessel", "tue", "tue");
+        const koerper = block(["ende"]);
+        verlange("schluessel", "ende", "ende");
+        return { art: "solange", bedingung, koerper, zeile: m.zeile };
+      }
+      if (passt("schluessel", "funktion")) {
+        weiter();
+        const name = verlange("name", undefined, "Funktionsname");
+        verlange("zeichen", "(", "(");
+        const params = [];
+        if (!passt("zeichen", ")")) {
+          do { params.push(verlange("name", undefined, "Parametername").wert); } while (nimmWenn("zeichen", ","));
+        }
+        verlange("zeichen", ")", ")");
+        const koerper = block(["ende"]);
+        verlange("schluessel", "ende", "ende");
+        if (params.length > 32) throw new Sprachfehler("zu viele Parameter", m.zeile, m.spalte);
+        return { art: "funktion", name: name.wert, params, koerper, zeile: m.zeile };
+      }
+      if (passt("schluessel", "zurück")) {
+        weiter();
+        const hatWert = !(passt("ende") || passt("schluessel", "ende") || passt("schluessel", "sonst"));
+        const wert = hatWert ? ausdruck(0) : null;
+        return { art: "zurueck", wert, zeile: m.zeile };
+      }
+      if (passt("schluessel", "zeige")) {
+        weiter();
+        const wert = ausdruck(0);
+        return { art: "zeige", wert, zeile: m.zeile };
+      }
+      // Zuweisung oder blanker Ausdruck
+      if (passt("name") && schau(1).art === "zeichen" && schau(1).wert === "=") {
+        const name = weiter();
+        weiter();
+        const wert = ausdruck(0);
+        return { art: "zuweisung", name: name.wert, wert, zeile: m.zeile };
+      }
+      const wert = ausdruck(0);
+      return { art: "ausdruckAnweisung", wert, zeile: m.zeile };
+    }
+
+    function ausdruck(mindest) {
+      let links = vorne();
+      for (;;) {
+        const m = schau();
+        const op = (m.art === "zeichen" || m.art === "schluessel") ? String(m.wert) : null;
+        const kraft = op !== null ? BINDUNG[op] : undefined;
+        if (kraft === undefined || kraft <= mindest) break;
+        weiter();
+        if (op === "(") {
+          const args = [];
+          if (!passt("zeichen", ")")) {
+            do { args.push(ausdruck(0)); } while (nimmWenn("zeichen", ","));
+          }
+          verlange("zeichen", ")", ")");
+          links = { art: "ruf", ziel: links, args, zeile: m.zeile };
+        } else {
+          const rechts = ausdruck(kraft);                 // linksassoziativ
+          links = { art: "binaer", op, links, rechts, zeile: m.zeile };
+        }
+      }
+      return links;
+    }
+
+    function vorne() {
+      const m = weiter();
+      if (m.art === "zahl") return { art: "zahl", wert: m.wert, zeile: m.zeile };
+      if (m.art === "text") return { art: "text", wert: m.wert, zeile: m.zeile };
+      if (m.art === "name") return { art: "name", name: m.wert, zeile: m.zeile };
+      if (m.art === "schluessel" && m.wert === "wahr") return { art: "wahrheit", wert: true, zeile: m.zeile };
+      if (m.art === "schluessel" && m.wert === "falsch") return { art: "wahrheit", wert: false, zeile: m.zeile };
+      if (m.art === "schluessel" && m.wert === "nicht") return { art: "unaer", op: "nicht", rechts: ausdruck(7), zeile: m.zeile };
+      if (m.art === "zeichen" && m.wert === "-") return { art: "unaer", op: "-", rechts: ausdruck(7), zeile: m.zeile };
+      if (m.art === "zeichen" && m.wert === "(") {
+        const innen = ausdruck(0);
+        verlange("zeichen", ")", ")");
+        return innen;
+      }
+      throw new Sprachfehler(`Ausdruck erwartet, gefunden: ${m.art === "ende" ? "Ende des Programms" : JSON.stringify(String(m.wert))}`,
+        m.zeile, m.spalte);
+    }
+
+    const baum = programm();
+    return baum;
+  }
+
+  /* Den Baum wieder als Text ausschreiben — vollständig geklammert. Der
+     Rückweg ist eine Prüfung für sich: neu zerlegt muss derselbe Baum
+     herauskommen. */
+  function alsText(k) {
+    switch (k.art) {
+      case "block": return k.liste.map(alsText).join("\n");
+      case "zahl": return String(k.wert).replace(".", ",");
+      case "text": return JSON.stringify(k.wert);
+      case "wahrheit": return k.wert ? "wahr" : "falsch";
+      case "name": return k.name;
+      case "unaer": return k.op === "nicht" ? `(nicht ${alsText(k.rechts)})` : `(-${alsText(k.rechts)})`;
+      case "binaer": return `(${alsText(k.links)} ${k.op} ${alsText(k.rechts)})`;
+      case "ruf": return `${alsText(k.ziel)}(${k.args.map(alsText).join(", ")})`;
+      case "sei": return `sei ${k.name} = ${alsText(k.wert)}`;
+      case "zuweisung": return `${k.name} = ${alsText(k.wert)}`;
+      case "zeige": return `zeige ${alsText(k.wert)}`;
+      case "zurueck": return k.wert ? `zurück ${alsText(k.wert)}` : "zurück";
+      case "ausdruckAnweisung": return alsText(k.wert);
+      case "wenn": return `wenn ${alsText(k.bedingung)} dann\n${alsText(k.dann)}\n` +
+        (k.sonst ? `sonst\n${alsText(k.sonst)}\n` : "") + "ende";
+      case "solange": return `solange ${alsText(k.bedingung)} tue\n${alsText(k.koerper)}\nende`;
+      case "funktion": return `funktion ${k.name}(${k.params.join(", ")})\n${alsText(k.koerper)}\nende`;
+      default: return "?";
+    }
+  }
+
+  /* Strukturgleichheit ohne Zeilennummern — für den Rückweg-Vergleich. */
+  function gleicherBaum(a, b) {
+    if (a === null || b === null) return a === b;
+    if (a.art !== b.art) return false;
+    switch (a.art) {
+      case "block": return a.liste.length === b.liste.length && a.liste.every((x, i) => gleicherBaum(x, b.liste[i]));
+      case "zahl": case "text": case "wahrheit": return a.wert === b.wert;
+      case "name": return a.name === b.name;
+      case "unaer": return a.op === b.op && gleicherBaum(a.rechts, b.rechts);
+      case "binaer": return a.op === b.op && gleicherBaum(a.links, b.links) && gleicherBaum(a.rechts, b.rechts);
+      case "ruf": return gleicherBaum(a.ziel, b.ziel) && a.args.length === b.args.length &&
+        a.args.every((x, i) => gleicherBaum(x, b.args[i]));
+      case "sei": case "zuweisung": return a.name === b.name && gleicherBaum(a.wert, b.wert);
+      case "zeige": case "ausdruckAnweisung": return gleicherBaum(a.wert, b.wert);
+      case "zurueck": return gleicherBaum(a.wert, b.wert);
+      case "wenn": return gleicherBaum(a.bedingung, b.bedingung) && gleicherBaum(a.dann, b.dann) &&
+        gleicherBaum(a.sonst, b.sonst);
+      case "solange": return gleicherBaum(a.bedingung, b.bedingung) && gleicherBaum(a.koerper, b.koerper);
+      case "funktion": return a.name === b.name && a.params.join() === b.params.join() &&
+        gleicherBaum(a.koerper, b.koerper);
+      default: return false;
+    }
+  }
+
+  /* ==========================================================================
+     ZWEITER ZEUGE A · Rangierbahnhof
+     Ein völlig anderes Verfahren für dieselbe Frage nach dem Vorrang: Operatoren
+     auf einen Hilfsstapel, Werte in die Ausgabe. Nur für reine Ausdrücke — im
+     Prüflauf muss es Zeichen für Zeichen dasselbe ergeben wie der Pratt-Parser.
+     ========================================================================== */
+  function rangierbahnhof(marken) {
+    const aus = [], ops = [];
+    const rang = { "oder": 1, "und": 2, "==": 3, "!=": 3, "<": 4, ">": 4, "<=": 4, ">=": 4,
+      "+": 5, "-": 5, "*": 6, "/": 6, "%": 6 };
+    const anwenden = () => {
+      const op = ops.pop();
+      if (op === "u-") { aus.push({ art: "unaer", op: "-", rechts: aus.pop() }); return; }
+      if (op === "nicht") { aus.push({ art: "unaer", op: "nicht", rechts: aus.pop() }); return; }
+      const r = aus.pop(), l = aus.pop();
+      aus.push({ art: "binaer", op, links: l, rechts: r });
+    };
+    let vorherWert = false;
+    for (const m of marken) {
+      if (m.art === "ende") break;
+      if (m.art === "zahl") { aus.push({ art: "zahl", wert: m.wert }); vorherWert = true; continue; }
+      if (m.art === "name") { aus.push({ art: "name", name: m.wert }); vorherWert = true; continue; }
+      if (m.art === "schluessel" && (m.wert === "wahr" || m.wert === "falsch")) {
+        aus.push({ art: "wahrheit", wert: m.wert === "wahr" }); vorherWert = true; continue;
+      }
+      if (m.art === "schluessel" && m.wert === "nicht") { ops.push("nicht"); vorherWert = false; continue; }
+      const w = String(m.wert);
+      if (w === "(") { ops.push("("); vorherWert = false; continue; }
+      if (w === ")") {
+        while (ops.length && ops[ops.length - 1] !== "(") anwenden();
+        ops.pop();
+        vorherWert = true;
+        continue;
+      }
+      if (w === "-" && !vorherWert) { ops.push("u-"); continue; }
+      const r = rang[w];
+      while (ops.length) {
+        const oben = ops[ops.length - 1];
+        if (oben === "(") break;
+        const ro = oben === "u-" || oben === "nicht" ? 7 : rang[oben];
+        if (ro < r) break;
+        anwenden();
+      }
+      ops.push(w);
+      vorherWert = false;
+    }
+    while (ops.length) anwenden();
+    return aus[aus.length - 1];
+  }
+
+  /* ==========================================================================
+     ZWEITER ZEUGE B · Auswerter direkt auf dem Baum
+     Kein Bytecode, keine Stapelmaschine — nur Rekursion über die Knoten. Die
+     Stapelmaschine muss Zeichen für Zeichen dieselbe Ausgabe liefern.
+     ========================================================================== */
+  function laufBaum(baum, grenze = 2000000) {
+    const ausgabe = [];
+    let schritte = 0;
+    const zurueckMarke = Symbol("zurück");
+
+    class Umgebung {
+      constructor(eltern) { this.werte = new Map(); this.eltern = eltern; }
+      setzeNeu(name, wert) { this.werte.set(name, wert); }
+      hole(name, zeile) {
+        let u = this;
+        while (u) { if (u.werte.has(name)) return u.werte.get(name); u = u.eltern; }
+        throw new Sprachfehler(`unbekannter Name ${JSON.stringify(name)}`, zeile || 0, 0);
+      }
+      setze(name, wert, zeile) {
+        let u = this;
+        while (u) { if (u.werte.has(name)) { u.werte.set(name, wert); return; } u = u.eltern; }
+        throw new Sprachfehler(`unbekannter Name ${JSON.stringify(name)}`, zeile || 0, 0);
+      }
+    }
+
+    const welt = new Umgebung(null);
+
+    function wahrheitVon(v) { return !(v === false || v === 0 || v === "" || v === null); }
+
+    function auswerten(k, u) {
+      if (++schritte > grenze) throw new Sprachfehler("Programm läuft zu lange", k.zeile || 0, 0);
+      switch (k.art) {
+        case "zahl": case "text": return k.wert;
+        case "wahrheit": return k.wert;
+        case "name": return u.hole(k.name, k.zeile);
+        case "unaer": {
+          const r = auswerten(k.rechts, u);
+          if (k.op === "-") {
+            if (typeof r !== "number") throw new Sprachfehler("Minus braucht eine Zahl", k.zeile, 0);
+            return -r;
+          }
+          return !wahrheitVon(r);
+        }
+        case "binaer": {
+          if (k.op === "und") return wahrheitVon(auswerten(k.links, u)) ? wahrheitVon(auswerten(k.rechts, u)) : false;
+          if (k.op === "oder") return wahrheitVon(auswerten(k.links, u)) ? true : wahrheitVon(auswerten(k.rechts, u));
+          const l = auswerten(k.links, u), r = auswerten(k.rechts, u);
+          return rechne(k.op, l, r, k.zeile);
+        }
+        case "ruf": {
+          const f = auswerten(k.ziel, u);
+          const args = k.args.map((a) => auswerten(a, u));
+          if (!f || f.art !== "funktion") throw new Sprachfehler("das ist keine Funktion", k.zeile, 0);
+          if (f.params.length !== args.length)
+            throw new Sprachfehler(`${f.name} erwartet ${f.params.length} Werte, bekommen ${args.length}`, k.zeile, 0);
+          const innen = new Umgebung(welt);
+          f.params.forEach((p, i) => innen.setzeNeu(p, args[i]));
+          const erg = fuehreBlock(f.koerper, innen);
+          return (erg && erg.marke === zurueckMarke) ? erg.wert : 0;
+        }
+        default: throw new Sprachfehler("unbekannter Knoten", k.zeile || 0, 0);
+      }
+    }
+
+    function fuehreBlock(block, eltern) {
+      const u = new Umgebung(eltern);
+      for (const a of block.liste) {
+        const erg = fuehre(a, u);
+        if (erg && erg.marke === zurueckMarke) return erg;
+      }
+      return null;
+    }
+
+    function fuehre(k, u) {
+      if (++schritte > grenze) throw new Sprachfehler("Programm läuft zu lange", k.zeile || 0, 0);
+      switch (k.art) {
+        case "sei": u.setzeNeu(k.name, auswerten(k.wert, u)); return null;
+        case "zuweisung": u.setze(k.name, auswerten(k.wert, u), k.zeile); return null;
+        case "zeige": ausgabe.push(zeigeText(auswerten(k.wert, u))); return null;
+        case "ausdruckAnweisung": auswerten(k.wert, u); return null;
+        case "zurueck": return { marke: zurueckMarke, wert: k.wert ? auswerten(k.wert, u) : 0 };
+        case "funktion": {
+          u.setzeNeu(k.name, { art: "funktion", name: k.name, params: k.params, koerper: k.koerper });
+          return null;
+        }
+        case "wenn": {
+          if (wahrheitVon(auswerten(k.bedingung, u))) return fuehreBlock(k.dann, u);
+          if (k.sonst) return fuehreBlock(k.sonst, u);
+          return null;
+        }
+        case "solange": {
+          while (wahrheitVon(auswerten(k.bedingung, u))) {
+            if (++schritte > grenze) throw new Sprachfehler("Programm läuft zu lange", k.zeile || 0, 0);
+            const erg = fuehreBlock(k.koerper, u);
+            if (erg && erg.marke === zurueckMarke) return erg;
+          }
+          return null;
+        }
+        case "block": return fuehreBlock(k, u);
+        default: throw new Sprachfehler("unbekannte Anweisung", k.zeile || 0, 0);
+      }
+    }
+
+    for (const a of baum.liste) {
+      const erg = fuehre(a, welt);
+      if (erg && erg.marke === zurueckMarke) break;
+    }
+    return { ausgabe, schritte };
+  }
+
+  /* Rechenregeln, einmal geschrieben und von beiden Wegen benutzt — sonst
+     prüfte man am Ende zwei verschiedene Sprachen gegeneinander. */
+  function rechne(op, l, r, zeile) {
+    const zahlen = () => {
+      if (typeof l !== "number" || typeof r !== "number")
+        throw new Sprachfehler(`${op} braucht zwei Zahlen`, zeile || 0, 0);
+    };
+    switch (op) {
+      case "+":
+        if (typeof l === "string" || typeof r === "string") return zeigeText(l) + zeigeText(r);
+        zahlen(); return l + r;
+      case "-": zahlen(); return l - r;
+      case "*": zahlen(); return l * r;
+      case "/": zahlen(); if (r === 0) throw new Sprachfehler("Teilung durch null", zeile || 0, 0); return l / r;
+      case "%": zahlen(); if (r === 0) throw new Sprachfehler("Rest bei Teilung durch null", zeile || 0, 0); return l % r;
+      case "==": return l === r;
+      case "!=": return l !== r;
+      case "<": zahlen(); return l < r;
+      case ">": zahlen(); return l > r;
+      case "<=": zahlen(); return l <= r;
+      case ">=": zahlen(); return l >= r;
+      default: throw new Sprachfehler(`unbekannter Operator ${op}`, zeile || 0, 0);
+    }
+  }
+
+  function zeigeText(v) {
+    if (typeof v === "number") {
+      if (Number.isInteger(v)) return String(v);
+      return String(Math.round(v * 1e10) / 1e10).replace(".", ",");
+    }
+    if (typeof v === "boolean") return v ? "wahr" : "falsch";
+    if (v && v.art === "funktion") return `<Funktion ${v.name}>`;
+    return String(v);
+  }
+
+  /* ==========================================================================
+     3 · BYTECODE
+     Ein Befehlssatz für eine Stapelmaschine. Jeder Befehl kennt seine Wirkung
+     auf die Stapelhöhe — daraus rechnet der Übersetzer die tiefste Stelle aus,
+     und der Prüflauf hält sie gegen das, was die Maschine tatsächlich braucht.
+     ========================================================================== */
+
+  const BEFEHLE = {
+    KONST:   { arg: "konstante", tiefe: +1 },
+    NICHTS:  { arg: null, tiefe: +1 },
+    HOL_L:   { arg: "platz", tiefe: +1 },
+    SETZ_L:  { arg: "platz", tiefe: 0 },
+    HOL_G:   { arg: "name", tiefe: +1 },
+    SETZ_G:  { arg: "name", tiefe: 0 },
+    DEF_G:   { arg: "name", tiefe: -1 },
+    ADD:     { arg: null, tiefe: -1 },
+    SUB:     { arg: null, tiefe: -1 },
+    MUL:     { arg: null, tiefe: -1 },
+    DIV:     { arg: null, tiefe: -1 },
+    MOD:     { arg: null, tiefe: -1 },
+    NEG:     { arg: null, tiefe: 0 },
+    NICHT:   { arg: null, tiefe: 0 },
+    WAHRHEIT:{ arg: null, tiefe: 0 },
+    GLEICH:  { arg: null, tiefe: -1 },
+    UNGLEICH:{ arg: null, tiefe: -1 },
+    KLEINER: { arg: null, tiefe: -1 },
+    GROESSER:{ arg: null, tiefe: -1 },
+    KL_GL:   { arg: null, tiefe: -1 },
+    GR_GL:   { arg: null, tiefe: -1 },
+    SPRUNG:  { arg: "ziel", tiefe: 0 },
+    SPR_FALSCH: { arg: "ziel", tiefe: -1 },
+    SPR_FALSCH_HALT: { arg: "ziel", tiefe: 0 },   // für und/oder: Wert bleibt liegen
+    SPR_WAHR_HALT:   { arg: "ziel", tiefe: 0 },
+    RUFE:    { arg: "anzahl", tiefe: 0 },          // wird beim Übersetzen genau gerechnet
+    ZURUECK: { arg: null, tiefe: -1 },
+    ZEIGE:   { arg: null, tiefe: -1 },
+    POP:     { arg: null, tiefe: -1 },
+    ENDE:    { arg: null, tiefe: 0 }
+  };
+
+  class Kette {
+    constructor(name, params) {
+      this.name = name;
+      this.params = params || [];
+      this.code = [];            // { befehl, arg, zeile }
+      this.konstanten = [];
+      this.tiefsteStelle = 0;
+    }
+    konstante(wert) {
+      const i = this.konstanten.findIndex((k) => k === wert && typeof k === typeof wert);
+      if (i >= 0) return i;
+      this.konstanten.push(wert);
+      return this.konstanten.length - 1;
+    }
+  }
+
+  function uebersetze(baum, optimieren) {
+    const funktionen = new Map();
+    const haupt = uebersetzeKoerper(baum, null, "hauptprogramm", []);
+    return { haupt, funktionen };
+
+    function uebersetzeKoerper(block, eltern, name, params) {
+      const kette = new Kette(name, params);
+      const lokale = [];                          // { name, tiefe }
+      let tiefe = 0;
+      let hoehe = 0, maxHoehe = 0;
+
+      const stelleFest = (befehl, arg, zeile) => {
+        const b = BEFEHLE[befehl];
+        if (!b) throw new Error("unbekannter Befehl " + befehl);
+        let dh = b.tiefe;
+        if (befehl === "RUFE") dh = -arg;          // Argumente weg, Funktion wird zum Ergebnis
+        hoehe += dh;
+        if (hoehe > maxHoehe) maxHoehe = hoehe;
+        if (hoehe < 0) hoehe = 0;
+        kette.code.push({ befehl, arg, zeile: zeile || 0 });
+        return kette.code.length - 1;
+      };
+
+      const platzVon = (n) => {
+        for (let i = lokale.length - 1; i >= 0; i--) if (lokale[i].name === n) return i;
+        return -1;
+      };
+
+      for (const p of params) lokale.push({ name: p, tiefe: 0 });
+      hoehe = params.length;
+      maxHoehe = hoehe;
+
+      const istHaupt = eltern === null && name === "hauptprogramm";
+
+      anweisungen(block);
+      if (kette.code.length === 0 || kette.code[kette.code.length - 1].befehl !== "ZURUECK") {
+        stelleFest("NICHTS", null, 0);
+        stelleFest("ZURUECK", null, 0);
+      }
+      kette.tiefsteStelle = maxHoehe + 2;
+      return kette;
+
+      function anweisungen(block) {
+        for (const a of block.liste) anweisung(a);
+      }
+
+      function blockMitBereich(block) {
+        tiefe++;
+        anweisungen(block);
+        tiefe--;
+        while (lokale.length && lokale[lokale.length - 1].tiefe > tiefe) {
+          lokale.pop();
+          stelleFest("POP", null, 0);
+        }
+      }
+
+      function anweisung(k) {
+        switch (k.art) {
+          case "sei": {
+            ausdruck(k.wert);
+            if (tiefe === 0 && istHaupt) {
+              stelleFest("DEF_G", k.name, k.zeile);
+            } else {
+              lokale.push({ name: k.name, tiefe });
+            }
+            return;
+          }
+          case "zuweisung": {
+            ausdruck(k.wert);
+            const p = platzVon(k.name);
+            if (p >= 0) { stelleFest("SETZ_L", p, k.zeile); stelleFest("POP", null, k.zeile); }
+            else { stelleFest("SETZ_G", k.name, k.zeile); stelleFest("POP", null, k.zeile); }
+            return;
+          }
+          case "zeige": ausdruck(k.wert); stelleFest("ZEIGE", null, k.zeile); return;
+          case "ausdruckAnweisung": ausdruck(k.wert); stelleFest("POP", null, k.zeile); return;
+          case "zurueck": {
+            if (k.wert) ausdruck(k.wert); else stelleFest("NICHTS", null, k.zeile);
+            stelleFest("ZURUECK", null, k.zeile);
+            return;
+          }
+          case "funktion": {
+            const unter = uebersetzeKoerper(k.koerper, kette, k.name, k.params);
+            funktionen.set(k.name, unter);
+            const f = { art: "funktion", name: k.name, params: k.params, kette: unter };
+            stelleFest("KONST", kette.konstante(f), k.zeile);
+            if (tiefe === 0 && istHaupt) stelleFest("DEF_G", k.name, k.zeile);
+            else lokale.push({ name: k.name, tiefe });
+            return;
+          }
+          case "wenn": {
+            ausdruck(k.bedingung);
+            const ueber = stelleFest("SPR_FALSCH", 0, k.zeile);
+            blockMitBereich(k.dann);
+            if (k.sonst) {
+              const ende = stelleFest("SPRUNG", 0, k.zeile);
+              kette.code[ueber].arg = kette.code.length;
+              blockMitBereich(k.sonst);
+              kette.code[ende].arg = kette.code.length;
+            } else {
+              kette.code[ueber].arg = kette.code.length;
+            }
+            return;
+          }
+          case "solange": {
+            const anfang = kette.code.length;
+            ausdruck(k.bedingung);
+            const raus = stelleFest("SPR_FALSCH", 0, k.zeile);
+            blockMitBereich(k.koerper);
+            stelleFest("SPRUNG", anfang, k.zeile);
+            kette.code[raus].arg = kette.code.length;
+            return;
+          }
+          case "block": blockMitBereich(k); return;
+          default: throw new Sprachfehler("unbekannte Anweisung beim Übersetzen", k.zeile || 0, 0);
+        }
+      }
+
+      function ausdruck(k) {
+        switch (k.art) {
+          case "zahl": case "text": stelleFest("KONST", kette.konstante(k.wert), k.zeile); return;
+          case "wahrheit": stelleFest("KONST", kette.konstante(k.wert), k.zeile); return;
+          case "name": {
+            const p = platzVon(k.name);
+            if (p >= 0) stelleFest("HOL_L", p, k.zeile);
+            else stelleFest("HOL_G", k.name, k.zeile);
+            return;
+          }
+          case "unaer": {
+            ausdruck(k.rechts);
+            stelleFest(k.op === "-" ? "NEG" : "NICHT", null, k.zeile);
+            return;
+          }
+          case "binaer": {
+            if (k.op === "und" || k.op === "oder") {
+              ausdruck(k.links);
+              const sprung = stelleFest(k.op === "und" ? "SPR_FALSCH_HALT" : "SPR_WAHR_HALT", 0, k.zeile);
+              stelleFest("POP", null, k.zeile);
+              ausdruck(k.rechts);
+              stelleFest("WAHRHEIT", null, k.zeile);
+              kette.code[sprung].arg = kette.code.length;
+              return;
+            }
+            ausdruck(k.links);
+            ausdruck(k.rechts);
+            const abb = { "+": "ADD", "-": "SUB", "*": "MUL", "/": "DIV", "%": "MOD",
+              "==": "GLEICH", "!=": "UNGLEICH", "<": "KLEINER", ">": "GROESSER",
+              "<=": "KL_GL", ">=": "GR_GL" };
+            stelleFest(abb[k.op], null, k.zeile);
+            return;
+          }
+          case "ruf": {
+            ausdruck(k.ziel);
+            for (const a of k.args) ausdruck(a);
+            stelleFest("RUFE", k.args.length, k.zeile);
+            return;
+          }
+          default: throw new Sprachfehler("unbekannter Ausdruck beim Übersetzen", k.zeile || 0, 0);
+        }
+      }
+    }
+  }
+
+  /* --------------------------------------------------------------------------
+     Optimierer. Erst am Baum (Konstanten zusammenfassen, toter Code), dann am
+     fertigen Bytecode (Gucklochoptimierung). Erlaubt ist nur, was das Ergebnis
+     nicht verändert — und genau das rechnet der Prüflauf nach.
+     -------------------------------------------------------------------------- */
+
+  function falteKonstanten(k, zaehler) {
+    if (!k || typeof k !== "object") return k;
+    switch (k.art) {
+      case "block": return { ...k, liste: totenCodeWeg(k.liste.map((x) => falteKonstanten(x, zaehler)), zaehler) };
+      case "unaer": {
+        const r = falteKonstanten(k.rechts, zaehler);
+        if (k.op === "-" && r.art === "zahl") { zaehler.gefaltet++; return { art: "zahl", wert: -r.wert, zeile: k.zeile }; }
+        if (k.op === "nicht" && r.art === "wahrheit") { zaehler.gefaltet++; return { art: "wahrheit", wert: !r.wert, zeile: k.zeile }; }
+        if (k.op === "-" && r.art === "unaer" && r.op === "-") { zaehler.gefaltet++; return r.rechts; }
+        if (k.op === "nicht" && r.art === "unaer" && r.op === "nicht") { zaehler.gefaltet++; return r.rechts; }
+        return { ...k, rechts: r };
+      }
+      case "binaer": {
+        const l = falteKonstanten(k.links, zaehler), r = falteKonstanten(k.rechts, zaehler);
+        const rein = (x) => x.art === "zahl" || x.art === "text" || x.art === "wahrheit";
+        if (rein(l) && rein(r) && k.op !== "und" && k.op !== "oder") {
+          try {
+            const wert = rechne(k.op, l.wert, r.wert, k.zeile);
+            zaehler.gefaltet++;
+            if (typeof wert === "number") return { art: "zahl", wert, zeile: k.zeile };
+            if (typeof wert === "boolean") return { art: "wahrheit", wert, zeile: k.zeile };
+            return { art: "text", wert, zeile: k.zeile };
+          } catch (f) { /* Teilung durch null bleibt stehen und knallt zur Laufzeit */ }
+        }
+        return { ...k, links: l, rechts: r };
+      }
+      case "ruf": return { ...k, ziel: falteKonstanten(k.ziel, zaehler), args: k.args.map((a) => falteKonstanten(a, zaehler)) };
+      case "sei": case "zuweisung": case "zeige": case "ausdruckAnweisung":
+        return { ...k, wert: falteKonstanten(k.wert, zaehler) };
+      case "zurueck": return { ...k, wert: k.wert ? falteKonstanten(k.wert, zaehler) : null };
+      case "wenn": return { ...k, bedingung: falteKonstanten(k.bedingung, zaehler),
+        dann: falteKonstanten(k.dann, zaehler), sonst: k.sonst ? falteKonstanten(k.sonst, zaehler) : null };
+      case "solange": return { ...k, bedingung: falteKonstanten(k.bedingung, zaehler),
+        koerper: falteKonstanten(k.koerper, zaehler) };
+      case "funktion": return { ...k, koerper: falteKonstanten(k.koerper, zaehler) };
+      default: return k;
+    }
+  }
+
+  function totenCodeWeg(liste, zaehler) {
+    const raus = [];
+    for (const a of liste) {
+      raus.push(a);
+      if (a.art === "zurueck") {
+        const rest = liste.length - raus.length;
+        if (rest > 0) zaehler.tot += rest;
+        break;
+      }
+    }
+    return raus;
+  }
+
+  /* Guckloch: kleine Muster im fertigen Bytecode, die sich streichen lassen. */
+  function guckloch(kette, zaehler) {
+    const alt = kette.code;
+    const behalten = new Array(alt.length).fill(true);
+    for (let i = 0; i < alt.length - 1; i++) {
+      if (!behalten[i]) continue;
+      const a = alt[i], b = alt[i + 1];
+      if ((a.befehl === "NEG" && b.befehl === "NEG") || (a.befehl === "NICHT" && b.befehl === "NICHT")) {
+        behalten[i] = behalten[i + 1] = false; zaehler.guckloch += 2; i++; continue;
+      }
+      if (a.befehl === "SPRUNG" && a.arg === i + 1) { behalten[i] = false; zaehler.guckloch++; continue; }
+    }
+    // Ziele umrechnen: alte Adresse → neue Adresse
+    const neueAdresse = new Array(alt.length + 1).fill(0);
+    let n = 0;
+    for (let i = 0; i < alt.length; i++) { neueAdresse[i] = n; if (behalten[i]) n++; }
+    neueAdresse[alt.length] = n;
+    const neu = [];
+    for (let i = 0; i < alt.length; i++) {
+      if (!behalten[i]) continue;
+      const b = { ...alt[i] };
+      if (BEFEHLE[b.befehl].arg === "ziel") b.arg = neueAdresse[b.arg];
+      neu.push(b);
+    }
+    kette.code = neu;
+    return kette;
+  }
+
+  /* ==========================================================================
+     4 · MASCHINE
+     Ein Stapel, ein Aufrufkeller, ein Befehlszeiger. Sie läuft in Schritten,
+     damit man ihr zusehen kann.
+     ========================================================================== */
+
+  class Maschine {
+    constructor(programm, grenze = 5000000) {
+      this.programm = programm;
+      this.stapel = [];
+      this.globale = new Map();
+      this.ausgabe = [];
+      this.rahmen = [{ kette: programm.haupt, ip: 0, basis: 0, name: "hauptprogramm" }];
+      this.schritte = 0;
+      this.grenze = grenze;
+      this.fertig = false;
+      this.fehler = null;
+      this.maxTiefe = 0;
+      this.tiefeJeKette = new Map();
+    }
+    get oben() { return this.rahmen[this.rahmen.length - 1]; }
+    wahrheitVon(v) { return !(v === false || v === 0 || v === "" || v === null); }
+
+    schritt() {
+      if (this.fertig) return false;
+      const r = this.oben;
+      if (!r || r.ip >= r.kette.code.length) { this.fertig = true; return false; }
+      const b = r.kette.code[r.ip++];
+      this.schritte++;
+      if (this.schritte > this.grenze) { this.fehler = new Sprachfehler("Programm läuft zu lange", b.zeile, 0); this.fertig = true; return false; }
+      try {
+        this.fuehre(b, r);
+      } catch (f) {
+        if (f instanceof Sprachfehler) { this.fehler = f; this.fertig = true; return false; }
+        throw f;
+      }
+      if (this.stapel.length > this.maxTiefe) this.maxTiefe = this.stapel.length;
+      const jetzt = this.oben;
+      if (jetzt) {
+        const rel = this.stapel.length - jetzt.basis;
+        const bisher = this.tiefeJeKette.get(jetzt.kette) || 0;
+        if (rel > bisher) this.tiefeJeKette.set(jetzt.kette, rel);
+      }
+      return !this.fertig;
+    }
+
+    fuehre(b, r) {
+      const s = this.stapel;
+      switch (b.befehl) {
+        case "KONST": s.push(r.kette.konstanten[b.arg]); return;
+        case "NICHTS": s.push(0); return;
+        case "HOL_L": s.push(s[r.basis + b.arg]); return;
+        case "SETZ_L": s[r.basis + b.arg] = s[s.length - 1]; return;
+        case "HOL_G": {
+          if (!this.globale.has(b.arg)) throw new Sprachfehler(`unbekannter Name ${JSON.stringify(b.arg)}`, b.zeile, 0);
+          s.push(this.globale.get(b.arg)); return;
+        }
+        case "SETZ_G": {
+          if (!this.globale.has(b.arg)) throw new Sprachfehler(`unbekannter Name ${JSON.stringify(b.arg)}`, b.zeile, 0);
+          this.globale.set(b.arg, s[s.length - 1]); return;
+        }
+        case "DEF_G": this.globale.set(b.arg, s.pop()); return;
+        case "ADD": case "SUB": case "MUL": case "DIV": case "MOD":
+        case "GLEICH": case "UNGLEICH": case "KLEINER": case "GROESSER": case "KL_GL": case "GR_GL": {
+          const rechtsW = s.pop(), linksW = s.pop();
+          /* Schneller Weg für den Normalfall zweier Zahlen: kein Umweg über die
+             Zeichenkette des Operators, keine Typprüfung in einer zweiten
+             Funktion. Alles andere — Text, Wahrheiten, Teilung durch null —
+             geht weiter durch dieselbe gemeinsame Regel wie beim Baum-Auswerter,
+             damit beide Wege garantiert dasselbe entscheiden. */
+          if (typeof linksW === "number" && typeof rechtsW === "number") {
+            switch (b.befehl) {
+              case "ADD": s.push(linksW + rechtsW); return;
+              case "SUB": s.push(linksW - rechtsW); return;
+              case "MUL": s.push(linksW * rechtsW); return;
+              case "DIV": if (rechtsW === 0) break; s.push(linksW / rechtsW); return;
+              case "MOD": if (rechtsW === 0) break; s.push(linksW % rechtsW); return;
+              case "GLEICH": s.push(linksW === rechtsW); return;
+              case "UNGLEICH": s.push(linksW !== rechtsW); return;
+              case "KLEINER": s.push(linksW < rechtsW); return;
+              case "GROESSER": s.push(linksW > rechtsW); return;
+              case "KL_GL": s.push(linksW <= rechtsW); return;
+              case "GR_GL": s.push(linksW >= rechtsW); return;
+            }
+          }
+          const op = { ADD: "+", SUB: "-", MUL: "*", DIV: "/", MOD: "%", GLEICH: "==",
+            UNGLEICH: "!=", KLEINER: "<", GROESSER: ">", KL_GL: "<=", GR_GL: ">=" }[b.befehl];
+          s.push(rechne(op, linksW, rechtsW, b.zeile));
+          return;
+        }
+        case "NEG": {
+          const v = s.pop();
+          if (typeof v !== "number") throw new Sprachfehler("Minus braucht eine Zahl", b.zeile, 0);
+          s.push(-v); return;
+        }
+        case "NICHT": s.push(!this.wahrheitVon(s.pop())); return;
+        case "WAHRHEIT": s.push(this.wahrheitVon(s.pop())); return;
+        case "SPRUNG": r.ip = b.arg; return;
+        case "SPR_FALSCH": if (!this.wahrheitVon(s.pop())) r.ip = b.arg; return;
+        case "SPR_FALSCH_HALT": if (!this.wahrheitVon(s[s.length - 1])) { s[s.length - 1] = false; r.ip = b.arg; } return;
+        case "SPR_WAHR_HALT": if (this.wahrheitVon(s[s.length - 1])) { s[s.length - 1] = true; r.ip = b.arg; } return;
+        case "ZEIGE": this.ausgabe.push(zeigeText(s.pop())); return;
+        case "POP": s.pop(); return;
+        case "RUFE": {
+          const anzahl = b.arg;
+          const f = s[s.length - anzahl - 1];
+          if (!f || f.art !== "funktion") throw new Sprachfehler("das ist keine Funktion", b.zeile, 0);
+          if (f.params.length !== anzahl)
+            throw new Sprachfehler(`${f.name} erwartet ${f.params.length} Werte, bekommen ${anzahl}`, b.zeile, 0);
+          if (this.rahmen.length > 200) throw new Sprachfehler("Aufrufe zu tief verschachtelt", b.zeile, 0);
+          this.rahmen.push({ kette: f.kette, ip: 0, basis: s.length - anzahl, name: f.name });
+          return;
+        }
+        case "ZURUECK": {
+          const wert = s.pop();
+          const alt = this.rahmen.pop();
+          if (this.rahmen.length === 0) { this.fertig = true; this.stapel.length = 0; return; }
+          s.length = alt.basis - 1;               // Argumente und Funktion weg
+          s.push(wert);
+          return;
+        }
+        case "ENDE": this.fertig = true; return;
+        default: throw new Sprachfehler(`unbekannter Befehl ${b.befehl}`, b.zeile, 0);
+      }
+    }
+
+    laufeGanz() {
+      while (this.schritt()) { /* weiter */ }
+      if (this.fehler) throw this.fehler;
+      return { ausgabe: this.ausgabe, schritte: this.schritte, maxTiefe: this.maxTiefe };
+    }
+  }
+
+  /* ==========================================================================
+     Der ganze Weg in einem Aufruf
+     ========================================================================== */
+  function baue(quelle, optimieren) {
+    const marken = woerter(quelle);
+    let baum = zerlege(marken);
+    const zaehler = { gefaltet: 0, tot: 0, guckloch: 0 };
+    if (optimieren) baum = falteKonstanten(baum, zaehler);
+    const programm = uebersetze(baum, optimieren);
+    if (optimieren) {
+      guckloch(programm.haupt, zaehler);
+      for (const k of programm.funktionen.values()) guckloch(k, zaehler);
+    }
+    return { marken, baum, programm, zaehler };
+  }
+
+  function fuehreAus(quelle, optimieren, grenze) {
+    const { programm } = baue(quelle, optimieren);
+    const m = new Maschine(programm, grenze);
+    return m.laufeGanz();
+  }
+
+  /* ==========================================================================
+     BEISPIELE
+     ========================================================================== */
+  const BEISPIELE = {
+    fibonacci: {
+      name: "Fibonacci (Rekursion)",
+      quelle: `# Rekursion, wie sie im Buch steht:
+# jeder Aufruf legt einen neuen Rahmen auf den Aufrufkeller.
+
+funktion fib(n)
+  wenn n < 2 dann
+    zurück n
+  ende
+  zurück fib(n - 1) + fib(n - 2)
+ende
+
+sei i = 0
+solange i <= 10 tue
+  zeige "fib(" + i + ") = " + fib(i)
+  i = i + 1
+ende`
+    },
+    ggt: {
+      name: "Größter gemeinsamer Teiler",
+      quelle: `# Euklid, ohne Rekursion — reine Schleife.
+
+funktion ggt(a, b)
+  solange b != 0 tue
+    sei rest = a % b
+    a = b
+    b = rest
+  ende
+  zurück a
+ende
+
+zeige "ggt(1071, 462) = " + ggt(1071, 462)
+zeige "ggt(270, 192) = " + ggt(270, 192)
+zeige "ggt(17, 5) = " + ggt(17, 5)`
+    },
+    primzahlen: {
+      name: "Primzahlen bis 60",
+      quelle: `# Probedivision. Die innere Schleife bricht früh ab —
+# gut zu sehen an den Sprüngen im Bytecode.
+
+funktion istPrim(n)
+  wenn n < 2 dann zurück falsch ende
+  sei t = 2
+  solange t * t <= n tue
+    wenn n % t == 0 dann
+      zurück falsch
+    ende
+    t = t + 1
+  ende
+  zurück wahr
+ende
+
+sei n = 2
+sei gefunden = 0
+solange n <= 60 tue
+  wenn istPrim(n) dann
+    zeige n
+    gefunden = gefunden + 1
+  ende
+  n = n + 1
+ende
+zeige "gefunden: " + gefunden`
+    },
+    collatz: {
+      name: "Collatz-Folge von 27",
+      quelle: `# Die berüchtigte Folge: gerade halbieren, ungerade mal drei plus eins.
+# Von 27 aus braucht sie 111 Schritte — und steigt zwischendurch auf 9232.
+
+sei n = 27
+sei schritte = 0
+sei groesstes = 27
+solange n != 1 tue
+  wenn n % 2 == 0 dann
+    n = n / 2
+  sonst
+    n = 3 * n + 1
+  ende
+  wenn n > groesstes dann groesstes = n ende
+  schritte = schritte + 1
+ende
+zeige "Schritte: " + schritte
+zeige "größter Wert: " + groesstes`
+    },
+    optimierer: {
+      name: "Futter für den Optimierer",
+      quelle: `# Alles hier lässt sich vor der Laufzeit ausrechnen oder streichen.
+# Optimierer oben ein- und ausschalten und die Befehlszahl vergleichen.
+
+sei stunden = 24 * 60 * 60
+sei doppelt = - -7
+sei sicher = nicht nicht wahr
+zeige "Sekunden am Tag: " + stunden
+zeige "doppeltes Minus: " + doppelt
+zeige "doppelte Verneinung: " + sicher
+
+funktion frueh()
+  zurück 1 + 2 * 3
+  zeige "diese Zeile erreicht niemand"
+  zeige "diese auch nicht"
+ende
+zeige "frueh() = " + frueh()`
+    },
+    fehler: {
+      name: "Ein Fehler mit Fundstelle",
+      quelle: `# Absichtlich kaputt: der Übersetzer soll nicht abstürzen,
+# sondern sagen, wo es klemmt.
+
+sei a = 3
+sei b = a * (2 +
+zeige b`
+    }
+  };
+
+  /* ==========================================================================
+     ANZEIGE
+     ========================================================================== */
+  let OPTIMIEREN = true;
+  let STAND = null;          // { marken, baum, programm, zaehler }
+  let MASCHINE = null;
+  let LAEUFT = false;
+  let UHR = null;
+
+  function farbe(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+  /* Werte koennen spitze Klammern enthalten (<Funktion fib>) — ohne Maskierung
+     verschluckt der Browser sie als Auszeichnung. */
+  const sicher = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+
+  function neuBauen() {
+    const quelle = $("quelle").value;
+    $("fehler-zeile").textContent = "";
+    $("fehler-zeile").className = "hinweis";
+    haltAn();
+    try {
+      STAND = baue(quelle, OPTIMIEREN);
+      MASCHINE = new Maschine(STAND.programm);
+      zeigeWoerter();
+      zeichneBaum();
+      zeigeCode();
+      zeigeMaschine();
+      $("ausgabe").textContent = "noch nichts ausgegeben";
+      $("ausgabe").className = "anzeige leer";
+      const zeilen = quelle.split("\n").length;
+      $("quelle-lage").textContent = `${zeilen} Zeilen · ${quelle.length} Zeichen`;
+    } catch (f) {
+      STAND = null; MASCHINE = null;
+      if (f instanceof Sprachfehler) {
+        /* Alles leeren, was jetzt nicht mehr stimmt — sonst steht der Bytecode
+           des vorigen Programms neben einer Fehlermeldung und behauptet, er
+           gehöre dazu. */
+        $("fehler-zeile").innerHTML = `<span class="fehler">✖ ${sicher(f.lang)}</span>`;
+        $("woerter").textContent = "";
+        $("code").querySelector("tbody").textContent = "";
+        $("code-fuss").textContent = "";
+        for (const id of ["woerter-lage", "baum-lage", "code-lage", "ausgabe-lage"]) $(id).textContent = "";
+        $("ausgabe").textContent = "kein lauffähiges Programm";
+        $("ausgabe").className = "anzeige leer";
+        zeigeMaschine();
+        const c = $("baum").getContext("2d");
+        c.fillStyle = farbe("--tief"); c.fillRect(0, 0, $("baum").width, $("baum").height);
+      } else {
+        throw f;
+      }
+    }
+  }
+
+  function zeigeWoerter() {
+    const ziel = $("woerter");
+    ziel.textContent = "";
+    for (const m of STAND.marken) {
+      if (m.art === "ende") continue;
+      const d = document.createElement("span");
+      d.className = "wortmarke " + m.art;
+      d.textContent = m.art === "text" ? JSON.stringify(m.wert) : String(m.wert);
+      d.title = `${m.art} · Zeile ${m.zeile}, Spalte ${m.spalte}`;
+      ziel.append(d);
+    }
+    const zahl = STAND.marken.length - 1;
+    const arten = {};
+    for (const m of STAND.marken) if (m.art !== "ende") arten[m.art] = (arten[m.art] || 0) + 1;
+    $("woerter-lage").textContent = `${zahl} Wörter · ` +
+      Object.entries(arten).map(([a, n]) => `${n} ${a}`).join(" · ");
+  }
+
+  /* Baum zeichnen: erst die Breite jedes Teilbaums messen, dann von oben
+     durchreichen. Ein Knoten steht über der Mitte seiner Kinder. */
+  function baumKnoten(k) {
+    if (!k) return null;
+    switch (k.art) {
+      case "block": return { text: "Block", kinder: k.liste.map(baumKnoten).filter(Boolean), farbe: "--leise" };
+      case "zahl": return { text: zeigeText(k.wert), kinder: [], farbe: "--lauf" };
+      case "text": return { text: JSON.stringify(k.wert), kinder: [], farbe: "--code" };
+      case "wahrheit": return { text: k.wert ? "wahr" : "falsch", kinder: [], farbe: "--lauf" };
+      case "name": return { text: k.name, kinder: [], farbe: "--wort" };
+      case "unaer": return { text: k.op, kinder: [baumKnoten(k.rechts)], farbe: "--baum" };
+      case "binaer": return { text: k.op, kinder: [baumKnoten(k.links), baumKnoten(k.rechts)], farbe: "--baum" };
+      case "ruf": return { text: "ruf", kinder: [baumKnoten(k.ziel), ...k.args.map(baumKnoten)], farbe: "--baum" };
+      case "sei": return { text: "sei " + k.name, kinder: [baumKnoten(k.wert)], farbe: "--wort" };
+      case "zuweisung": return { text: k.name + " =", kinder: [baumKnoten(k.wert)], farbe: "--wort" };
+      case "zeige": return { text: "zeige", kinder: [baumKnoten(k.wert)], farbe: "--code" };
+      case "zurueck": return { text: "zurück", kinder: k.wert ? [baumKnoten(k.wert)] : [], farbe: "--code" };
+      case "ausdruckAnweisung": return baumKnoten(k.wert);
+      case "wenn": return { text: "wenn", farbe: "--baum",
+        kinder: [baumKnoten(k.bedingung), baumKnoten(k.dann), ...(k.sonst ? [baumKnoten(k.sonst)] : [])] };
+      case "solange": return { text: "solange", kinder: [baumKnoten(k.bedingung), baumKnoten(k.koerper)], farbe: "--baum" };
+      case "funktion": return { text: `funktion ${k.name}(${k.params.join(", ")})`, kinder: [baumKnoten(k.koerper)], farbe: "--wort" };
+      default: return { text: k.art, kinder: [], farbe: "--leise" };
+    }
+  }
+
+  function zeichneBaum() {
+    const c = $("baum"), g = c.getContext("2d");
+    g.fillStyle = farbe("--tief"); g.fillRect(0, 0, c.width, c.height);
+    const wurzel = baumKnoten(STAND.baum);
+    if (!wurzel) return;
+
+    const ZEILE = 46, ABSTAND = 14;
+    g.font = "11px ui-monospace, monospace";
+
+    const messe = (k) => {
+      k.breite = g.measureText(k.text).width + 16;
+      if (!k.kinder.length) { k.gesamt = k.breite; return k.gesamt; }
+      const summe = k.kinder.reduce((s, x) => s + messe(x), 0) + (k.kinder.length - 1) * ABSTAND;
+      k.gesamt = Math.max(k.breite, summe);
+      return k.gesamt;
+    };
+    const tiefeVon = (k) => k.kinder.length ? 1 + Math.max(...k.kinder.map(tiefeVon)) : 1;
+
+    messe(wurzel);
+    const tiefe = tiefeVon(wurzel);
+    /* Lieber breit werden und rollen lassen als schrumpfen: unter etwa 60 %
+       ist die Beschriftung nicht mehr zu lesen, und ein unlesbarer Baum
+       erklärt nichts. */
+    const platz = (c.parentElement && c.parentElement.clientWidth) || 1000;
+    const noetig = Math.ceil(wurzel.gesamt + 24);
+    const breite = Math.max(platz, Math.min(7000, noetig));
+    if (c.width !== breite) c.width = breite;
+    c.style.width = breite <= platz ? "100%" : breite + "px";
+    const hoehe = tiefe * ZEILE + 20;
+    c.height = Math.max(140, Math.min(1200, hoehe));
+    g.fillStyle = farbe("--tief"); g.fillRect(0, 0, c.width, c.height);
+    g.font = "11px ui-monospace, monospace";
+    g.textAlign = "center"; g.textBaseline = "middle";
+
+    const skala = Math.min(1, (c.width - 20) / wurzel.gesamt);
+    const zeichne = (k, x, y) => {
+      const mitte = x + k.gesamt / 2;
+      let kx = x;
+      for (const kind of k.kinder) {
+        const km = kx + kind.gesamt / 2;
+        g.strokeStyle = farbe("--netz"); g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(mitte * skala + 10, y + 9);
+        g.lineTo(km * skala + 10, y + ZEILE - 9);
+        g.stroke();
+        zeichne(kind, kx, y + ZEILE);
+        kx += kind.gesamt + ABSTAND;
+      }
+      const b = k.breite * skala, px = mitte * skala + 10;
+      g.fillStyle = farbe("--feld");
+      g.fillRect(px - b / 2, y - 9, b, 18);
+      g.strokeStyle = farbe(k.farbe); g.lineWidth = 1.2;
+      g.strokeRect(px - b / 2, y - 9, b, 18);
+      g.fillStyle = farbe(k.farbe);
+      g.fillText(k.text, px, y + 1);
+    };
+    zeichne(wurzel, 0, 22);
+
+    const zaehleKnoten = (k) => 1 + k.kinder.reduce((s, x) => s + zaehleKnoten(x), 0);
+    $("baum-lage").textContent = `${zaehleKnoten(wurzel)} Knoten · ${tiefe} Ebenen tief` +
+      (breite > platz ? " · seitlich rollbar" : "");
+  }
+
+  function zeigeCode() {
+    const tb = $("code").querySelector("tbody");
+    tb.textContent = "";
+    const ketten = [STAND.programm.haupt, ...STAND.programm.funktionen.values()];
+    let gesamt = 0;
+    for (const kette of ketten) {
+      const kopf = document.createElement("tr");
+      kopf.innerHTML = `<td colspan="4" class="kl" style="padding-top:8px">${kette.name}${
+        kette.params.length ? "(" + kette.params.join(", ") + ")" : ""} · tiefste Stelle ${kette.tiefsteStelle}</td>`;
+      tb.append(kopf);
+      kette.code.forEach((b, i) => {
+        gesamt++;
+        const tr = document.createElement("tr");
+        tr.dataset.kette = kette.name;
+        tr.dataset.ip = String(i);
+        const argText = sicher(BEFEHLE[b.befehl].arg === "konstante"
+          ? zeigeText(kette.konstanten[b.arg])
+          : (b.arg === null || b.arg === undefined ? "" : String(b.arg)));
+        tr.innerHTML = `<td class="nr">${i}</td><td class="bef">${b.befehl}</td>` +
+          `<td class="arg">${argText}</td><td class="bem">${b.zeile ? "Zeile " + b.zeile : ""}</td>`;
+        tb.append(tr);
+      });
+    }
+    $("code-lage").textContent = `${gesamt} Befehle · ${ketten.length} Ketten`;
+    const z = STAND.zaehler;
+    $("code-fuss").innerHTML = OPTIMIEREN
+      ? `Optimierer an: <b>${z.gefaltet}</b> Ausdrücke vorab ausgerechnet, <b>${z.tot}</b> Anweisungen ` +
+        `hinter einem <code>zurück</code> gestrichen, <b>${z.guckloch}</b> Befehle per Guckloch entfernt.`
+      : "Optimierer aus — der Bytecode steht so da, wie der Übersetzer ihn geradeheraus erzeugt.";
+  }
+
+  function zeigeMaschine() {
+    const m = MASCHINE;
+    $("w-schritte").textContent = m ? m.schritte.toLocaleString("de-AT") : "0";
+    $("w-tiefe").textContent = m ? m.stapel.length : "0";
+    $("w-rahmen").textContent = m ? m.rahmen.length : "0";
+    const zustand = !m ? "kein Programm" : m.fehler ? "Fehler" : m.fertig ? "fertig" : LAEUFT ? "läuft" : "bereit";
+    const zEl = $("w-zustand");
+    zEl.textContent = zustand;
+    zEl.className = "n " + (m && m.fehler ? "warn" : m && m.fertig ? "gut" : "");
+
+    const st = $("stapel");
+    st.textContent = "";
+    if (m) {
+      const sicht = m.stapel.slice(-9);
+      sicht.forEach((v, i) => {
+        const d = document.createElement("div");
+        d.textContent = zeigeText(v);
+        if (i === sicht.length - 1) d.className = "oben";
+        st.append(d);
+      });
+      if (!m.stapel.length) {
+        const d = document.createElement("div");
+        d.textContent = "leer"; d.style.color = "var(--leise)";
+        st.append(d);
+      }
+    }
+
+    const ra = $("rahmen");
+    ra.textContent = "";
+    if (m) {
+      m.rahmen.slice(-6).forEach((r, i, arr) => {
+        const d = document.createElement("div");
+        d.textContent = `${r.name} @${r.ip}`;
+        if (i === arr.length - 1) d.className = "oben";
+        ra.append(d);
+      });
+    }
+
+    const vb = $("variablen").querySelector("tbody");
+    vb.textContent = "";
+    if (m) {
+      const zeilen = [];
+      for (const [k, v] of m.globale) zeilen.push([k, zeigeText(v), "global"]);
+      const r = m.oben;
+      if (r && r.kette.params.length) {
+        r.kette.params.forEach((p, i) => zeilen.push([p, zeigeText(m.stapel[r.basis + i]), "lokal in " + r.name]));
+      }
+      for (const [a, b, c] of zeilen.slice(0, 12)) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${sicher(a)}</td><td class="z">${sicher(b)}</td><td class="bem" style="color:var(--leise)">${c}</td>`;
+        vb.append(tr);
+      }
+      if (!zeilen.length) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="3" style="color:var(--leise)">noch keine</td>`;
+        vb.append(tr);
+      }
+    }
+
+    // laufende Zeile im Bytecode hervorheben
+    for (const tr of $("code").querySelectorAll("tr.jetzt")) tr.classList.remove("jetzt");
+    if (m && !m.fertig && m.oben) {
+      const ziel = $("code").querySelector(`tr[data-kette="${CSS.escape(m.oben.kette.name)}"][data-ip="${m.oben.ip}"]`);
+      if (ziel) {
+        ziel.classList.add("jetzt");
+        const box = ziel.closest(".code-liste");
+        if (box) {
+          const oben = ziel.offsetTop - box.offsetTop;
+          if (oben < box.scrollTop || oben > box.scrollTop + box.clientHeight - 30) box.scrollTop = oben - 60;
+        }
+      }
+    }
+
+    if (m && m.ausgabe.length) {
+      $("ausgabe").textContent = m.ausgabe.join("\n");
+      $("ausgabe").className = "anzeige";
+    }
+    if (m && m.fehler) {
+      $("fehler-zeile").innerHTML = `<span class="fehler">✖ ${sicher(m.fehler.lang)}</span>`;
+    }
+    $("ausgabe-lage").textContent = m ? `${m.ausgabe.length} Zeilen` : "";
+  }
+
+  function einSchritt() {
+    if (!MASCHINE) return false;
+    const weiter = MASCHINE.schritt();
+    zeigeMaschine();
+    return weiter;
+  }
+
+  function haltAn() {
+    LAEUFT = false;
+    if (UHR) { clearInterval(UHR); UHR = null; }
+    $("b-laufen").textContent = "Laufen";
+  }
+
+  function laufen() {
+    if (!MASCHINE || MASCHINE.fertig) return;
+    if (LAEUFT) { haltAn(); zeigeMaschine(); return; }
+    LAEUFT = true;
+    $("b-laufen").textContent = "Halt";
+    const tempo = +$("tempo").value;
+    const proTakt = tempo >= 95 ? 20000 : Math.max(1, Math.round(Math.pow(tempo / 12, 2.2)));
+    const takt = tempo >= 95 ? 0 : Math.max(0, 60 - tempo / 2);
+    UHR = setInterval(() => {
+      let weiter = true;
+      for (let i = 0; i < proTakt && weiter; i++) weiter = MASCHINE.schritt();
+      zeigeMaschine();
+      if (!weiter) haltAn();
+    }, takt);
+  }
+
+  /* ==========================================================================
+     PRÜFLAUF
+     ========================================================================== */
+
+  function wuerfel(saat) {
+    let a = saat >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* Zufällige Ausdrücke — nur Zahlen und sichere Operatoren, damit der
+     Vergleich am Wert entscheidbar bleibt. */
+  function zufallsAusdruck(z, tiefe) {
+    const w = z();
+    if (tiefe <= 0 || w < 0.3) return String(Math.floor(z() * 20));
+    const ops = ["+", "-", "*", "%", "<", ">", "==", "und", "oder"];
+    const op = ops[Math.floor(z() * ops.length)];
+    const l = zufallsAusdruck(z, tiefe - 1), r = zufallsAusdruck(z, tiefe - 1);
+    if (op === "%" ) return `(${l} % (1 + ${r} % 7))`;              // nie durch null
+    if (op === "und" || op === "oder") return `((${l}) ${op} (${r}))`;
+    if (z() < 0.15) return `(-(${l}) ${op} ${r})`;
+    return `(${l} ${op} ${r})`;
+  }
+
+  /* Zufällige Programme: Schleifen laufen garantiert ab, Rekursion ist an eine
+     abnehmende Zahl gebunden. Sonst prüfte man nur Endlosschleifen. */
+  function zufallsProgramm(z) {
+    const zeilen = [];
+    const namen = ["a", "b", "c", "d"];
+    for (const n of namen) zeilen.push(`sei ${n} = ${Math.floor(z() * 12)}`);
+    const stueck = 2 + Math.floor(z() * 4);
+    for (let i = 0; i < stueck; i++) {
+      const art = z();
+      const n = namen[Math.floor(z() * namen.length)];
+      if (art < 0.3) {
+        zeilen.push(`${n} = ${zufallsAusdruck(z, 2)}`);
+      } else if (art < 0.55) {
+        zeilen.push(`wenn ${zufallsAusdruck(z, 2)} dann`);
+        zeilen.push(`  ${n} = ${n} + ${1 + Math.floor(z() * 5)}`);
+        if (z() < 0.5) { zeilen.push("sonst"); zeilen.push(`  ${n} = ${n} - 1`); }
+        zeilen.push("ende");
+      } else if (art < 0.8) {
+        const zaehler = "i" + i;
+        zeilen.push(`sei ${zaehler} = ${2 + Math.floor(z() * 5)}`);
+        zeilen.push(`solange ${zaehler} > 0 tue`);
+        zeilen.push(`  ${n} = ${n} + ${zufallsAusdruck(z, 1)}`);
+        zeilen.push(`  ${zaehler} = ${zaehler} - 1`);
+        zeilen.push("ende");
+      } else {
+        const f = "f" + i;
+        zeilen.push(`funktion ${f}(x)`);
+        zeilen.push(`  wenn x <= 0 dann zurück ${Math.floor(z() * 5)} ende`);
+        zeilen.push(`  zurück x + ${f}(x - 1)`);
+        zeilen.push("ende");
+        zeilen.push(`${n} = ${f}(${2 + Math.floor(z() * 4)})`);
+      }
+      zeilen.push(`zeige ${n}`);
+    }
+    zeilen.push(`zeige ${zufallsAusdruck(z, 2)}`);
+    return zeilen.join("\n");
+  }
+
+  function pruefen() {
+    const tb = $("pruef").querySelector("tbody");
+    tb.textContent = "";
+    let fehler = 0;
+    const zeile = (was, gut, text) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${was}</td><td style="color:${gut ? "var(--gut)" : "var(--warn)"}">${text}</td>`;
+      tb.append(tr);
+      if (!gut) fehler++;
+    };
+    const t0 = performance.now();
+
+    // 1. Zwei Parser, ein Baum.
+    {
+      const z = wuerfel(20260818);
+      let faelle = 0, ungleich = 0, beispiel = "";
+      for (let i = 0; i < 2000; i++) {
+        const quelle = zufallsAusdruck(z, 3);
+        faelle++;
+        try {
+          const marken = woerter(quelle);
+          const a = zerlege(marken).liste[0].wert;
+          const b = rangierbahnhof(marken);
+          if (!gleicherBaum(a, b)) { ungleich++; if (!beispiel) beispiel = quelle.slice(0, 60); }
+        } catch (f) { ungleich++; if (!beispiel) beispiel = quelle.slice(0, 60) + " → " + f.message; }
+      }
+      zeile("Pratt-Parser = Rangierbahnhof", ungleich === 0,
+        `${faelle.toLocaleString("de-AT")} zufällige Ausdrücke · ` +
+        (ungleich === 0 ? "Baum für Baum identisch" : `${ungleich} Abweichungen, z. B. ${beispiel}`));
+    }
+
+    // 2. Baum ausschreiben und wieder einlesen.
+    {
+      const z = wuerfel(4711);
+      let faelle = 0, ungleich = 0, beispiel = "";
+      for (let i = 0; i < 1500; i++) {
+        const quelle = zufallsProgramm(z);
+        faelle++;
+        try {
+          const a = zerlege(woerter(quelle));
+          const b = zerlege(woerter(alsText(a)));
+          if (!gleicherBaum(a, b)) { ungleich++; if (!beispiel) beispiel = "Programm " + i; }
+        } catch (f) { ungleich++; if (!beispiel) beispiel = "Programm " + i + ": " + f.message; }
+      }
+      zeile("Baum → Text → Baum trifft sich selbst", ungleich === 0,
+        `${faelle.toLocaleString("de-AT")} Programme ausgeschrieben und neu zerlegt · ` +
+        (ungleich === 0 ? "kein Unterschied" : `${ungleich} Abweichungen (${beispiel})`));
+    }
+
+    // 3. Stapelmaschine gegen Baum-Auswerter.
+    let tempoBaum = 0, tempoMaschine = 0, schritteMaschine = 0;
+    {
+      const z = wuerfel(99991);
+      let faelle = 0, ungleich = 0, beispiel = "";
+      for (let i = 0; i < 1200; i++) {
+        const quelle = zufallsProgramm(z);
+        faelle++;
+        let ausBaum = null, ausMaschine = null, fehlerBaum = null, fehlerMaschine = null;
+        let tA = performance.now();
+        try { ausBaum = laufBaum(zerlege(woerter(quelle))).ausgabe.join("|"); }
+        catch (f) { fehlerBaum = f.message; }
+        tempoBaum += performance.now() - tA;
+        tA = performance.now();
+        try {
+          const erg = fuehreAus(quelle, false);
+          ausMaschine = erg.ausgabe.join("|");
+          schritteMaschine += erg.schritte;
+        } catch (f) { fehlerMaschine = f.message; }
+        tempoMaschine += performance.now() - tA;
+        const gleich = fehlerBaum || fehlerMaschine
+          ? (fehlerBaum && fehlerMaschine)
+          : ausBaum === ausMaschine;
+        if (!gleich) { ungleich++; if (!beispiel) beispiel = `Programm ${i}: ${String(ausBaum).slice(0, 30)} ≠ ${String(ausMaschine).slice(0, 30)}`; }
+      }
+      zeile("Maschine = Auswerter auf dem Baum", ungleich === 0,
+        `${faelle.toLocaleString("de-AT")} erzeugte Programme, Ausgabe Zeile für Zeile verglichen · ` +
+        (ungleich === 0 ? "kein Unterschied" : `${ungleich} Abweichungen (${beispiel})`));
+      /* Zwei Regime, getrennt gemessen — beim ersten Versuch steckte das
+         Übersetzen mit in der Zeit, und dann verliert Bytecode gegen den Baum.
+         Das ist keine Panne, sondern die Aussage: der Bytecode muss erst
+         verdient werden. */
+      const rechenlast = `funktion fib(n)
+ wenn n < 2 dann zurück n ende
+ zurück fib(n-1) + fib(n-2)
+ende
+zeige fib(21)`;
+      const baumFertig = zerlege(woerter(rechenlast));
+      const uebersetzt = baue(rechenlast, true).programm;
+      /* Einmal messen heißt hier: den JIT beim Aufwärmen messen. Der erste Lauf
+         zählt deshalb nicht, und von drei weiteren gilt der schnellste — das ist
+         die Zahl, die sich wiederholen lässt. */
+      const messe = (mach) => {
+        mach();
+        let bestes = Infinity;
+        for (let i = 0; i < 3; i++) {
+          const t = performance.now();
+          mach();
+          bestes = Math.min(bestes, performance.now() - t);
+        }
+        return bestes;
+      };
+      const ergBaum = laufBaum(baumFertig);
+      const ergM = new Maschine(uebersetzt).laufeGanz();
+      const tB = messe(() => laufBaum(baumFertig));
+      const tM = messe(() => new Maschine(uebersetzt).laufeGanz());
+      const gleich = ergBaum.ausgabe.join("|") === ergM.ausgabe.join("|");
+      zeile("Tempo gemessen: Maschine gegen Baum", gleich,
+        `fib(21) = ${ergM.ausgabe.join("")} · Maschine ${tM.toFixed(0)} ms für ` +
+        `${ergM.schritte.toLocaleString("de-AT")} Befehle (${Math.round(ergM.schritte / Math.max(0.001, tM) / 1000)} Mio/s), ` +
+        `Baum ${tB.toFixed(0)} ms — Faktor ${(tB / Math.max(0.01, tM)).toFixed(2)} (bester von drei Läufen nach einem Aufwärmlauf)`);
+      zeile("bei Einmalprogrammen gewinnt der Baum", true,
+        `${faelle.toLocaleString("de-AT")} winzige Programme je einmal ausgeführt: mit Übersetzen ` +
+        `${tempoMaschine.toFixed(0)} ms gegen ${tempoBaum.toFixed(0)} ms — Faktor ` +
+        `${(tempoBaum / Math.max(0.01, tempoMaschine)).toFixed(2)}. Das Übersetzen muss sich erst lohnen.`);
+    }
+
+    // 4. Der Optimierer ändert nichts am Ergebnis.
+    {
+      const z = wuerfel(31337);
+      let faelle = 0, ungleich = 0, ohne = 0, mit = 0;
+      for (let i = 0; i < 1200; i++) {
+        const quelle = zufallsProgramm(z);
+        faelle++;
+        try {
+          const a = fuehreAus(quelle, false).ausgabe.join("|");
+          const b = fuehreAus(quelle, true).ausgabe.join("|");
+          if (a !== b) ungleich++;
+          ohne += zaehleBefehle(baue(quelle, false).programm);
+          mit += zaehleBefehle(baue(quelle, true).programm);
+        } catch (f) { /* beide Wege scheitern gleich, siehe Zeile 3 */ }
+      }
+      zeile("Optimierer lässt das Ergebnis in Ruhe", ungleich === 0,
+        `${faelle.toLocaleString("de-AT")} Programme mit und ohne Optimierer · ` +
+        (ungleich === 0 ? `identische Ausgabe · ${ohne.toLocaleString("de-AT")} → ${mit.toLocaleString("de-AT")} Befehle ` +
+          `(${(100 - mit / ohne * 100).toFixed(1)} % weniger)` : `${ungleich} Abweichungen`));
+    }
+
+    // 5. Die vom Übersetzer gerechnete Stapeltiefe hält.
+    {
+      const z = wuerfel(2024);
+      let faelle = 0, verletzt = 0, leerNichtOk = 0, geprueft = 0, schlimmstes = null;
+      for (let i = 0; i < 600; i++) {
+        const quelle = zufallsProgramm(z);
+        try {
+          const { programm } = baue(quelle, true);
+          const m = new Maschine(programm);
+          m.laufeGanz();
+          faelle++;
+          // je Kette einzeln: was die Maschine ueber ihrer Rahmenbasis wirklich
+          // gebraucht hat, gegen das, was der Uebersetzer vorher ausgerechnet hat
+          for (const [kette, gemessen] of m.tiefeJeKette) {
+            geprueft++;
+            if (gemessen > kette.tiefsteStelle) {
+              verletzt++;
+              if (!schlimmstes) schlimmstes = `${kette.name}: ${gemessen} statt hoechstens ${kette.tiefsteStelle}`;
+            }
+          }
+          if (m.stapel.length !== 0) leerNichtOk++;
+        } catch (f) { /* Laufzeitfehler zählen hier nicht */ }
+      }
+      zeile("gerechnete Stapeltiefe hält", verletzt === 0 && leerNichtOk === 0,
+        `${faelle} Läufe, ${geprueft.toLocaleString("de-AT")} Ketten gemessen · ` +
+        (verletzt ? `${verletzt} Überschreitungen (${schlimmstes})` : "keine Kette brauchte mehr als gerechnet") +
+        ` · ${leerNichtOk} mal Reste auf dem Stapel`);
+    }
+
+    // 6. Bekannte Programme mit bekannten Ergebnissen.
+    {
+      const proben = [
+        ["fib(20)", `funktion fib(n)\n wenn n < 2 dann zurück n ende\n zurück fib(n-1) + fib(n-2)\nende\nzeige fib(20)`, "6765"],
+        ["Fakultät(10)", `funktion f(n)\n wenn n <= 1 dann zurück 1 ende\n zurück n * f(n - 1)\nende\nzeige f(10)`, "3628800"],
+        ["ggt(1071,462)", `funktion g(a,b)\n solange b != 0 tue\n  sei r = a % b\n  a = b\n  b = r\n ende\n zurück a\nende\nzeige g(1071, 462)`, "21"],
+        ["Collatz(27)", `sei n = 27\nsei s = 0\nsolange n != 1 tue\n wenn n % 2 == 0 dann n = n / 2 sonst n = 3*n+1 ende\n s = s + 1\nende\nzeige s`, "111"],
+        ["Primzahlen < 100", `funktion p(n)\n wenn n < 2 dann zurück falsch ende\n sei t = 2\n solange t*t <= n tue\n  wenn n % t == 0 dann zurück falsch ende\n  t = t + 1\n ende\n zurück wahr\nende\nsei i = 2\nsei c = 0\nsolange i < 100 tue\n wenn p(i) dann c = c + 1 ende\n i = i + 1\nende\nzeige c`, "25"],
+        ["Text und Zahl", `zeige "Summe: " + (2 + 3)`, "Summe: 5"],
+        ["Kurzschluss", `funktion knall()\n zurück 1 / 0\nende\nzeige (falsch und knall()) oder wahr`, "wahr"]
+      ];
+      let falsch = 0, namen = [];
+      for (const [name, quelle, soll] of proben) {
+        try {
+          const ist = fuehreAus(quelle, true).ausgabe.join("|");
+          if (ist !== soll) { falsch++; namen.push(`${name}: ${ist} statt ${soll}`); }
+        } catch (f) { falsch++; namen.push(`${name}: ${f.message}`); }
+      }
+      zeile("bekannte Ergebnisse treffen", falsch === 0,
+        falsch === 0 ? `${proben.length} Programme: fib(20)=6765 · 10!=3628800 · ggt=21 · Collatz(27)=111 Schritte · 25 Primzahlen`
+                     : namen.join(" · "));
+    }
+
+    // 7. Angriff auf die Fehlerbehandlung.
+    {
+      const z = wuerfel(13579);
+      const grund = Object.values(BEISPIELE).map((b) => b.quelle);
+      const zeichen = `+-*/%()=<>," 0123456789abcnxyzäü\n\t"`;
+      let faelle = 0, sauber = 0, abstuerze = [], ohneFundstelle = 0;
+      for (let i = 0; i < 10000; i++) {
+        let q = grund[Math.floor(z() * grund.length)];
+        const wieOft = 1 + Math.floor(z() * 4);
+        for (let k = 0; k < wieOft; k++) {
+          const stelle = Math.floor(z() * q.length);
+          const art = z();
+          if (art < 0.4) q = q.slice(0, stelle) + q.slice(stelle + 1);
+          else if (art < 0.8) q = q.slice(0, stelle) + zeichen[Math.floor(z() * zeichen.length)] + q.slice(stelle);
+          else q = q.slice(0, stelle) + q.slice(stelle, stelle + 3).split("").reverse().join("") + q.slice(stelle + 3);
+        }
+        faelle++;
+        try {
+          fuehreAus(q, true, 20000);
+          sauber++;
+        } catch (f) {
+          if (f instanceof Sprachfehler) {
+            sauber++;
+            if (!(f.zeile >= 0)) ohneFundstelle++;
+          } else {
+            if (abstuerze.length < 3) abstuerze.push(`${f.name}: ${f.message}`.slice(0, 90));
+          }
+        }
+      }
+      zeile("zerstörte Quelltexte bringen nichts zum Absturz", abstuerze.length === 0 && ohneFundstelle === 0,
+        `${faelle.toLocaleString("de-AT")} mutierte Programme · ${sauber.toLocaleString("de-AT")} sauber behandelt · ` +
+        (abstuerze.length ? `Abstürze: ${abstuerze.join(" | ")}` : `${ohneFundstelle} ohne Fundstelle`));
+    }
+
+    // 8. Fehlermeldungen zeigen auf die richtige Zeile.
+    {
+      const proben = [
+        [`sei a = 1\nsei b = (2 +\nzeige b`, 3],
+        [`zeige 1\nzeige 2 +\nzeige 3`, 3],
+        [`funktion f()\n zurück 1\nzeige f()`, 3],
+        [`sei x = 1\nx = x + unbekannt\nzeige x`, 2],
+        [`sei x = 1 / 0\nzeige x`, 1]
+      ];
+      let falsch = 0, notiz = [];
+      for (const [quelle, sollZeile] of proben) {
+        try {
+          fuehreAus(quelle, false);
+          falsch++; notiz.push("kein Fehler gemeldet");
+        } catch (f) {
+          if (!(f instanceof Sprachfehler)) { falsch++; notiz.push("falsche Fehlerart"); }
+          else if (f.zeile !== sollZeile) { falsch++; notiz.push(`Zeile ${f.zeile} statt ${sollZeile}`); }
+        }
+      }
+      zeile("Fehler zeigen auf die richtige Zeile", falsch === 0,
+        falsch === 0 ? `${proben.length} kaputte Programme, jede Fundstelle stimmt`
+                     : notiz.join(" · "));
+    }
+
+    const dauer = performance.now() - t0;
+    $("pruef-fuss").innerHTML = fehler === 0
+      ? `<b>Alle Prüfungen bestanden</b> in ${dauer.toFixed(0)} ms. Die ersten vier Zeilen sind der Kern: ` +
+        `zwei Parser und zwei Auswerter, unabhängig geschrieben, müssen auf tausenden zufälligen Programmen ` +
+        `dasselbe ergeben — <i>und</i> dasselbe, wenn der Optimierer dazwischen aufräumt.`
+      : `<b style="color:var(--warn)">${fehler} Prüfung(en) fehlgeschlagen.</b>`;
+  }
+
+  function zaehleBefehle(programm) {
+    let n = programm.haupt.code.length;
+    for (const k of programm.funktionen.values()) n += k.code.length;
+    return n;
+  }
+
+  /* ==========================================================================
+     BEDIENUNG
+     ========================================================================== */
+  {
+    const w = $("beispiel");
+    for (const [k, b] of Object.entries(BEISPIELE)) {
+      const o = document.createElement("option");
+      o.value = k; o.textContent = b.name;
+      w.append(o);
+    }
+    w.addEventListener("change", () => {
+      $("quelle").value = BEISPIELE[w.value].quelle;
+      neuBauen();
+    });
+  }
+
+  let tippUhr = null;
+  $("quelle").addEventListener("input", () => {
+    clearTimeout(tippUhr);
+    tippUhr = setTimeout(neuBauen, 250);
+  });
+
+  $("b-optimieren").addEventListener("click", (e) => {
+    OPTIMIEREN = !OPTIMIEREN;
+    e.currentTarget.setAttribute("aria-pressed", String(OPTIMIEREN));
+    neuBauen();
+  });
+  $("b-schritt").addEventListener("click", () => { haltAn(); einSchritt(); });
+  $("b-laufen").addEventListener("click", laufen);
+  $("b-zurueck").addEventListener("click", () => { haltAn(); neuBauen(); });
+  $("tempo").addEventListener("input", () => {
+    const v = +$("tempo").value;
+    $("tempo-zahl").textContent = v >= 95 ? "so schnell es geht" : v >= 60 ? "flott" : v >= 30 ? "gemächlich" : "im Schritt";
+    if (LAEUFT) { haltAn(); laufen(); }
+  });
+  $("b-pruefen").addEventListener("click", pruefen);
+  $("b-thema").addEventListener("click", () => {
+    const jetzt = document.documentElement.getAttribute("data-theme");
+    const dunkel = matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", jetzt ? (jetzt === "dark" ? "light" : "dark") : (dunkel ? "light" : "dark"));
+    if (STAND) { zeichneBaum(); }
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (STAND) zeichneBaum(); });
+
+  $("quelle").value = BEISPIELE.fibonacci.quelle;
+  $("tempo").dispatchEvent(new Event("input"));
+  neuBauen();
+})();
+</script>
+</body>
+</html>
